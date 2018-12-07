@@ -169,19 +169,16 @@ static int counter_iterator(void *cls, enum MHD_ValueKind kind, const char *key,
 
 static int is_foreign_hosts(struct MHD_Connection *connection, const char *host)
 {
-	char our_host[MAX_HOSTPORTLEN];
 	s_config *config = config_get_config();
-	snprintf(our_host, MAX_HOSTPORTLEN, "%s", config->gw_address);
 
 	/* we serve all request without a host entry as well we serve all request going to our gw_address */
 	if (host == NULL)
 		return 0;
 
-	if (!strcmp(host, our_host))
+	if (!strcmp(host, config->gw_http_name))
 		return 0;
 
-	/* port 80 is special, because the hostname doesn't need a port */
-	if (config->gw_port == 80 && !strcmp(host, config->gw_ip))
+	if (!strcmp(host, config->gw_http_name_port))
 		return 0;
 
 	return 1;
@@ -191,7 +188,7 @@ static int is_splashpage(const char *host, const char *url)
 {
 	char our_host[MAX_HOSTPORTLEN];
 	s_config *config = config_get_config();
-	snprintf(our_host, MAX_HOSTPORTLEN, "%s", config->gw_address);
+	snprintf(our_host, MAX_HOSTPORTLEN, "%s", config->gw_http_name);
 
 	if (host == NULL) {
 		/* no hostname given
@@ -563,7 +560,7 @@ static int authenticated(struct MHD_Connection *connection,
 
 	if (check_authdir_match(url, config->denydir)) {
 		auth_client_deauth(client->id, "client_deauth");
-		snprintf(redirect_to_us, sizeof(redirect_to_us), "http://%s/", config->gw_address);
+		snprintf(redirect_to_us, sizeof(redirect_to_us), "http://%s/", config->gw_http_name);
 		return send_redirect_temp(connection, client, redirect_to_us);
 	}
 
@@ -787,7 +784,7 @@ static int encode_and_redirect_to_splashpage(struct MHD_Connection *connection, 
 		// Note: config->fas_path contains a leading / as it is the path from the FAS web root.
 		if (config->fas_secure_enabled == 0) {
 			safe_asprintf(&splashpageurl, "%s?authaction=http://%s/%s/%s&redir=%s",
-				config->fas_url, config->gw_address, config->authdir, querystr, originurl);
+				config->fas_url, config->gw_http_name, config->authdir, querystr, originurl);
 		} else if (config->fas_secure_enabled == 1) {
 				safe_asprintf(&splashpageurl, "%s%s&redir=%s",
 					config->fas_url, querystr, originurl);
@@ -826,7 +823,7 @@ static int encode_and_redirect_to_splashpage(struct MHD_Connection *connection, 
 		}
 	} else {
 		safe_asprintf(&splashpageurl, "http://%s/%s?redir=%s",
-			config->gw_address, config->splashpage, originurl);
+			config->gw_http_name, config->splashpage, originurl);
 	}
 
 	debug(LOG_INFO, "splashpageurl: %s", splashpageurl);
@@ -1231,10 +1228,11 @@ static void replace_variables(
 
 	sprintf(nclients, "%d", get_client_list_length());
 	sprintf(maxclients, "%d", config->maxclients);
-	safe_asprintf(&denyaction, "http://%s/%s/", config->gw_address, config->denydir);
-	safe_asprintf(&authaction, "http://%s/%s/", config->gw_address, config->authdir);
-	safe_asprintf(&authtarget, "http://%s/%s/?tok=%s&amp;redir=%s",
-		config->gw_address, config->authdir, client->token, redirect_url);
+	safe_asprintf(&denyaction, "http://%s/%s/", config->gw_http_name, config->denydir);
+	safe_asprintf(&authaction, "http://%s/%s/", config->gw_http_name, config->authdir);
+	safe_asprintf(&authtarget, "http://%s/%s/?tok=%s&amp;redir=%s", config->gw_http_name, config->authdir, client->token, redirect_url);
+	safe_asprintf(&pagesdir, "/%s", config->pagesdir);
+	safe_asprintf(&imagesdir, "/%s", config->imagesdir);
 
 	struct template vars[] = {
 		{"authaction", authaction},
