@@ -66,7 +66,7 @@ static int redirect_to_splashpage(struct MHD_Connection *connection, t_client *c
 static int send_error(struct MHD_Connection *connection, int error);
 static int send_redirect_temp(struct MHD_Connection *connection, t_client *client, const char *url);
 static int send_refresh(struct MHD_Connection *connection);
-static int is_foreign_hosts(struct MHD_Connection *connection, const char *host);
+static int is_foreign_hosts(const char *host);
 static int is_splashpage(const char *host, const char *url);
 static int get_query(struct MHD_Connection *connection, char **collect_query, const char *separator);
 static char *construct_querystring(t_client *client, char *originurl, char *querystr);
@@ -167,7 +167,7 @@ static int counter_iterator(void *cls, enum MHD_ValueKind kind, const char *key,
 	return MHD_YES;
 }
 
-static int is_foreign_hosts(struct MHD_Connection *connection, const char *host)
+static int is_foreign_hosts(const char *host)
 {
 	s_config *config = config_get_config();
 
@@ -553,7 +553,7 @@ static int authenticated(struct MHD_Connection *connection,
 
 	/* check if this is a late request, meaning the user tries to get the internet, but ended up here,
 	 * because the iptables rule came too late */
-	if (is_foreign_hosts(connection, host)) {
+	if (is_foreign_hosts(host)) {
 		/* might happen if the firewall rule isn't yet installed */
 		return send_refresh(connection);
 	}
@@ -716,7 +716,7 @@ static int preauthenticated(struct MHD_Connection *connection,
 	}
 
 	/* check if this is a redirect query with a foreign host as target */
-	if (is_foreign_hosts(connection, host)) {
+	if (is_foreign_hosts(host)) {
 		return redirect_to_splashpage(connection, client, host, url);
 	}
 
