@@ -432,6 +432,9 @@ ndsctl_status(FILE *fp)
 	fprintf(fp, "Client Check Interval: %ds\n", config->checkinterval);
 	fprintf(fp, "Preauth Idle Timeout: %dm\n", config->preauth_idle_timeout);
 	fprintf(fp, "Auth Idle Timeout: %dm\n", config->auth_idle_timeout);
+	format_duration(0, config->session_timeout * 60, durationbuf);
+	fprintf(fp, "Session Timeout: %s\n", durationbuf);
+	fprintf(fp, "Block after Session timed out: %s\n", config->session_timeout_block ? "yes" : "no");
 
 	if (config->redirectURL) {
 		fprintf(fp, "Redirect URL: %s\n", config->redirectURL);
