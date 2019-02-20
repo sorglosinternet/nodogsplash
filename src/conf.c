@@ -65,6 +65,7 @@ static int missing_parms;
 typedef enum {
 	oBadOption,
 	oSessionTimeout,
+	oSessionTimeoutBlock,
 	oDaemon,
 	oDebugLevel,
 	oMaxClients,
@@ -120,6 +121,7 @@ static const struct {
 	int required;
 } keywords[] = {
 	{ "sessiontimeout", oSessionTimeout },
+	{ "sessiontimeoutblock", oSessionTimeoutBlock },
 	{ "daemon", oDaemon },
 	{ "debuglevel", oDebugLevel },
 	{ "maxclients", oMaxClients },
@@ -198,6 +200,7 @@ config_init(void)
 	debug(LOG_DEBUG, "Setting default config parameters");
 	strncpy(config.configfile, DEFAULT_CONFIGFILE, sizeof(config.configfile)-1);
 	config.session_timeout = DEFAULT_SESSION_TIMEOUT;
+	config.session_timeout_block = DEFAULT_SESSION_TIMEOUT_BLOCK;
 	config.debuglevel = DEFAULT_DEBUGLEVEL;
 	config.maxclients = DEFAULT_MAXCLIENTS;
 	config.gw_name = safe_strdup(DEFAULT_GATEWAYNAME);
@@ -723,6 +726,13 @@ config_read(const char *filename)
 		switch(opcode) {
 		case oSessionTimeout:
 			if (sscanf(p1, "%d", &config.session_timeout) < 1 || config.session_timeout < 0) {
+				debug(LOG_ERR, "Bad arg %s to option %s on line %d in %s", p1, s, linenum, filename);
+				debug(LOG_ERR, "Exiting...");
+				exit(-1);
+			}
+			break;
+		case oSessionTimeoutBlock:
+			if (sscanf(p1, "%u", &config.session_timeout_block) < 1) {
 				debug(LOG_ERR, "Bad arg %s to option %s on line %d in %s", p1, s, linenum, filename);
 				debug(LOG_ERR, "Exiting...");
 				exit(-1);
