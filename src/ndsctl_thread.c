@@ -197,7 +197,7 @@ thread_ndsctl(void *arg)
 				}
 
 			} else {
-				if (ndsctl_handler(events[i].data.fd)) {
+				if (!ndsctl_handler(events[i].data.fd)) {
 					free(events);
 					pthread_exit(NULL);
 				}
@@ -219,7 +219,7 @@ thread_ndsctl(void *arg)
 static int
 ndsctl_handler(int fd)
 {
-	int done, i, ret = 0;
+	int done, i, ret = 1;
 	char request[MAX_BUF];
 	ssize_t read_bytes, len;
 	FILE* fp;
@@ -258,8 +258,7 @@ ndsctl_handler(int fd)
 	} else if (strncmp(request, "json", 4) == 0) {
 		ndsctl_json(fp, (request + 5));
 	} else if (strncmp(request, "stop", 4) == 0) {
-		/* tell the caller to stop the thread */
-		ret = 1;
+		ret = 0;
 	} else if (strncmp(request, "block", 5) == 0) {
 		ndsctl_block(fp, (request + 6));
 	} else if (strncmp(request, "unblock", 7) == 0) {
