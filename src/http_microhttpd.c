@@ -1231,8 +1231,6 @@ static void replace_variables(
 	safe_asprintf(&denyaction, "http://%s/%s/", config->gw_http_name, config->denydir);
 	safe_asprintf(&authaction, "http://%s/%s/", config->gw_http_name, config->authdir);
 	safe_asprintf(&authtarget, "http://%s/%s/?tok=%s&amp;redir=%s", config->gw_http_name, config->authdir, client->token, redirect_url);
-	safe_asprintf(&pagesdir, "/%s", config->pagesdir);
-	safe_asprintf(&imagesdir, "/%s", config->imagesdir);
 
 	struct template vars[] = {
 		{"authaction", authaction},
