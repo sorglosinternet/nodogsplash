@@ -33,6 +33,7 @@
 #include <pthread.h>
 
 #include <string.h>
+#include <stdbool.h>
 #include <ctype.h>
 #include <sys/stat.h>
 #include <arpa/inet.h>
@@ -109,6 +110,8 @@ typedef enum {
 	oPreAuth,
 	oStateFile,
 	oClientListMode,
+	oUseNftables,
+	oNftableName,
 } OpCodes;
 
 /** @internal
@@ -161,6 +164,8 @@ static const struct {
 	{ "preauth", oPreAuth },
 	{ "statefile", oStateFile },
 	{ "clientlistmode", oClientListMode },
+	{ "usenftables", oUseNftables },
+	{ "nftablename", oNftableName },
 	{ NULL, oBadOption },
 };
 
@@ -239,6 +244,8 @@ config_init(void)
 	config.preauth = NULL;
 	config.statefile = safe_strdup(DEFAULT_STATE_FILE);
 	config.client_mode = MODE_MAC_IP;
+	config.use_nftables = DEFAULT_USE_NFTABLES;
+	config.nftable_name = safe_strdup(DEFAULT_NFTABLE_NAME);
 
 	/* Set up default FirewallRuleSets, and their empty ruleset policies */
 	rs = add_ruleset("trusted-users");
@@ -609,6 +616,12 @@ get_empty_ruleset_policy(const char *rulesetname)
 	t_firewall_ruleset *rs;
 
 	rs = get_ruleset(rulesetname);
+
+	if (config.use_nftables) {
+		for (int i = 0; rs->emptyrulesetpolicy[i]; i++){
+			rs->emptyrulesetpolicy[i] = tolower(rs->emptyrulesetpolicy[i]);
+		}
+	}
 	return rs ? rs->emptyrulesetpolicy : NULL;
 }
 
@@ -944,6 +957,18 @@ config_read(const char *filename)
 				debug(LOG_ERR, "Exiting...");
 				exit(1);
 			}
+			break;
+		case oUseNftables:
+			if ((value = parse_boolean(p1)) != -1) {
+				config.use_nftables = value;
+			} else {
+				debug(LOG_ERR, "Bad option %s on line %d in %s", s, linenum, filename);
+				debug(LOG_ERR, "Exiting...");
+				exit(1);
+			}
+			break;
+		case oNftableName:
+			config.nftable_name = safe_strdup(p1);
 			break;
 		case oBadOption:
 			debug(LOG_ERR, "Bad option %s on line %d in %s", s, linenum, filename);
