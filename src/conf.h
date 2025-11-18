@@ -29,6 +29,9 @@
 #ifndef _NDS_CONF_H_
 #define _NDS_CONF_H_
 
+#include <stdint.h>
+#include <stdbool.h>
+
 #include "debug.h"
 
 #define VERSION "5.0.2"

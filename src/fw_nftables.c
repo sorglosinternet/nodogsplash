@@ -295,7 +295,6 @@ nftables_fw_init(void)
 	FW_MARK_BLOCKED = config->fw_mark_blocked;
 	FW_MARK_TRUSTED = config->fw_mark_trusted;
 	FW_MARK_AUTHENTICATED = config->fw_mark_authenticated;
-	skip_fw_entry_creation = config->skip_fw_entry_creation;
 	nftable_name = safe_strdup(config->nftable_name); /* must free */
 	UNLOCK_CONFIG();
 

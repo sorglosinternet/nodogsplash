@@ -25,11 +25,13 @@
   @author Copyright (C) 2007 Paul Kube <nodogsplash@kokoro.ucsd.edu>
  */
 
+#include <stdint.h>
 #define _GNU_SOURCE
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <syslog.h>
 #include <errno.h>
 #include <string.h>

@@ -33,6 +33,7 @@
 #include <pthread.h>
 
 #include <string.h>
+#include <stdbool.h>
 #include <ctype.h>
 #include <sys/stat.h>
 #include <arpa/inet.h>
