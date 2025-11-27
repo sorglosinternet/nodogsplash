@@ -972,7 +972,7 @@ iptables_fw_counters_update(void)
 	int af;
 	s_config *config;
 	unsigned long long int counter;
-	t_client *p1;
+	t_client *client;
 	struct sockaddr_storage tempaddr;
 
 	config = config_get_config();
@@ -1005,11 +1005,11 @@ iptables_fw_counters_update(void)
 				continue;
 			}
 			debug(LOG_DEBUG, "Read outgoing traffic for %s: Bytes=%llu", ip, counter);
-			if ((p1 = client_list_find_by_ip(ip))) {
-				if (p1->counters.outgoing < counter) {
-					p1->counters.outgoing = counter;
-					p1->counters.last_updated = time(NULL);
-					debug(LOG_DEBUG, "%s - Updated counter.outgoing to %llu bytes.  Updated last_updated to %d", ip, counter, p1->counters.last_updated);
+			if ((client = client_list_find_by_ip(ip))) {
+				if (client->counters.outgoing < counter) {
+					client->counters.outgoing = counter;
+					client->counters.last_updated = time(NULL);
+					debug(LOG_DEBUG, "%s - Updated counter.outgoing to %llu bytes.  Updated last_updated to %d", ip, counter, client->counters.last_updated);
 				}
 			} else {
 				debug(LOG_WARNING, "Could not find %s in client list", ip);
@@ -1043,9 +1043,9 @@ iptables_fw_counters_update(void)
 				continue;
 			}
 			debug(LOG_DEBUG, "Read incoming traffic for %s: Bytes=%llu", ip, counter);
-			if ((p1 = client_list_find_by_ip(ip))) {
-				if (p1->counters.incoming < counter) {
-					p1->counters.incoming = counter;
+			if ((client = client_list_find_by_ip(ip))) {
+				if (client->counters.incoming < counter) {
+					client->counters.incoming = counter;
 					debug(LOG_DEBUG, "%s - Updated counter.incoming to %llu bytes", ip, counter);
 				}
 			} else {
