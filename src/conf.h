@@ -134,6 +134,16 @@ typedef struct _MAC_t {
 
 
 /**
+ * Client List Mode, how a client is analysiert.
+ */
+enum client_mode {
+	MODE_MAC_IP = 0,
+	MODE_MAC,
+};
+
+char *client_list_mode_str(int client_list_mode);
+
+/**
  * Configuration structure
  */
 typedef struct {
@@ -185,6 +195,7 @@ typedef struct {
 	char *binauth;			/**< @brief external authentication program */
 	char *preauth;			/**< @brief external preauthentication program */
 	char *statefile;		/**< @brief saves the client states */
+	enum client_mode client_mode;	/**< @brief define how the client list is organized */
 } s_config;
 
 /** @brief Get the current gateway configuration */

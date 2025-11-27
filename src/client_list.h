@@ -35,7 +35,9 @@
 /** Counters struct for a client's bandwidth usage (in bytes)
  */
 typedef struct _t_counters {
+	unsigned long long incoming_offset;	/**< @brief Incoming offset */
 	unsigned long long incoming;	/**< @brief Incoming data total */
+	unsigned long long outgoing_offset;	/**< @brief Outgoing offset */
 	unsigned long long outgoing;	/**< @brief Outgoing data total */
 	time_t last_updated;	/**< @brief Last update of the counters */
 } t_counters;
@@ -73,7 +75,10 @@ t_client *client_list_add_client(const char mac[], const char ip[]);
 t_client *client_list_find_by_any(const char mac[], const char ip[], const char token[]);
 
 /** @brief Finds a client by its MAC and IP */
-t_client * client_list_find(const char mac[], const char ip[]);
+t_client *client_list_find(const char mac[], const char ip[]);
+
+/** @brief Finds a client and if needed, migrate the client IP */
+t_client *client_list_find_migrate(const char *mac, const char *ip);
 
 /** @brief Finds a client by its client id */
 t_client * client_list_find_by_id(const unsigned id);
