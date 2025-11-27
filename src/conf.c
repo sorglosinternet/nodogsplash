@@ -43,6 +43,10 @@
 #include "debug.h"
 #include "conf.h"
 
+#ifndef ARRAY_SIZE
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
+#endif
+
 /** @internal
  * Holds the current configuration of the gateway */
 static s_config config = {{0}};
@@ -104,6 +108,7 @@ typedef enum {
 	oBinAuth,
 	oPreAuth,
 	oStateFile,
+	oClientListMode,
 } OpCodes;
 
 /** @internal
@@ -155,6 +160,7 @@ static const struct {
 	{ "binauth", oBinAuth },
 	{ "preauth", oPreAuth },
 	{ "statefile", oStateFile },
+	{ "clientlistmode", oClientListMode },
 	{ NULL, oBadOption },
 };
 
@@ -232,6 +238,7 @@ config_init(void)
 	config.binauth = NULL;
 	config.preauth = NULL;
 	config.statefile = safe_strdup(DEFAULT_STATE_FILE);
+	config.client_mode = MODE_MAC_IP;
 
 	/* Set up default FirewallRuleSets, and their empty ruleset policies */
 	rs = add_ruleset("trusted-users");
@@ -952,6 +959,27 @@ config_read(const char *filename)
 			debug(LOG_ERR, "nodogsplash built without statefile, but statefile given.");
 #endif /* WITH_STATE_FILE */
 			break;
+		case oClientListMode:
+			/* FIXME: use MAC or mac_ip as string values instead of numbers */
+			value = -1;
+			if (sscanf(p1, "%d", &value) < 1) {
+				debug(LOG_ERR, "Bad arg %s to option %s on line %d in %s", p1, s, linenum, filename);
+				debug(LOG_ERR, "Exiting...");
+				exit(1);
+			}
+
+			switch (value) {
+			case MODE_MAC_IP:
+			case MODE_MAC:
+				config.client_mode = value;
+				debug(LOG_ERR, "Using client mode %s", client_list_mode_str(value));
+				break;
+			default:
+				debug(LOG_ERR, "Unknown client mode given %s for %s on line %d in %s", p1, s, linenum, filename);
+				exit(1);
+				break;
+			}
+			break;
 		}
 	}
 
@@ -1424,4 +1452,24 @@ config_notnull(const void *parm, const char parmname[])
 		debug(LOG_ERR, "%s is not set", parmname);
 		missing_parms = 1;
 	}
+}
+
+struct value_strings {
+	int value;
+	char *string;
+};
+
+const struct value_strings client_list_mode_values[] = {
+    { MODE_MAC_IP,	"MAC&IP" },
+    { MODE_MAC,		"MAC" },
+    };
+
+char *client_list_mode_str(int client_list_mode)
+{
+	for (int i = 0; i < ARRAY_SIZE(client_list_mode_values); i++) {
+		if (client_list_mode == client_list_mode_values[i].value)
+			return client_list_mode_values->string;
+	}
+
+	return "unknown client list mode";
 }

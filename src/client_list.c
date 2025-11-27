@@ -32,6 +32,7 @@
 #include <sys/wait.h>
 #include <sys/types.h>
 
+#include <assert.h>
 #include <string.h>
 
 #include "safe.h"
@@ -40,7 +41,6 @@
 #include "client_list.h"
 #include "fw_iptables.h"
 #include "util.h"
-
 
 /** Client counter */
 static int client_count = 0;
@@ -178,7 +178,9 @@ void client_reset(t_client *client)
 {
 	// Reset traffic counters
 	client->counters.incoming = 0;
+	client->counters.incoming_offset = 0;
 	client->counters.outgoing = 0;
+	client->counters.outgoing_offset = 0;
 	client->counters.last_updated = time(NULL);
 
 	// Reset seesion time
@@ -249,15 +251,88 @@ client_list_find_by_any(const char mac[], const char ip[], const char token[])
 	return client;
 }
 
+static
+void
+client_migrate_ip(t_client *client, const char *new_ip)
+{
+	if (client->fw_connection_state == FW_MARK_AUTHENTICATED) {
+		/* TODO: replace call with a much "smaller" call */
+		iptables_fw_counters_update();
+
+		client->counters.incoming_offset = client->counters.incoming;
+		client->counters.outgoing_offset = client->counters.outgoing;
+
+		iptables_fw_deauthenticate(client);
+
+		if (client->ip)
+			free(client->ip);
+		client->ip = safe_strdup(new_ip);
+
+		iptables_fw_authenticate(client);
+	} else {
+		if (client->ip)
+			free(client->ip);
+		client->ip = safe_strdup(new_ip);
+	}
+}
+
+/** Finds a client and if needed, migrate the client IP
+ *
+ * \param mac mac address in the format 02:ca:ff:ee:ba:be
+ * \param ip IP in human readable format
+ * \return client if found or NULL
+ */
+t_client *
+client_list_find_migrate(const char *mac, const char *ip)
+{
+	s_config *config = config_get_config();
+	t_client *client = client_list_find(mac, ip);
+
+	if (!client)
+		return NULL;
+
+	/* Check if mac or ip needs to be migrated, because it changed */
+	switch (config->client_mode) {
+	case MODE_MAC_IP:
+		/* No need for migration */
+		break;
+	case MODE_MAC:
+		if (!strcmp(client->ip, ip)) {
+			break;
+		}
+		debug(LOG_INFO, "Migrating IP for Client %d (%s): old ip %s -> new ip %s",
+		      client->id, client->mac, client->ip, ip);
+
+		client_migrate_ip(client, ip);
+		break;
+	default:
+		assert(0);
+	}
+
+	return client;
+}
+
 t_client *
 client_list_find(const char mac[], const char ip[])
 {
+	s_config *config = config_get_config();
 	t_client *ptr;
 
 	ptr = firstclient;
 	while (ptr) {
-		if (!strcmp(ptr->mac, mac) && !strcmp(ptr->ip, ip)) {
-			return ptr;
+		switch (config->client_mode) {
+		case MODE_MAC_IP:
+			if (!strcmp(ptr->mac, mac) && !strcmp(ptr->ip, ip)) {
+				return ptr;
+			}
+			break;
+		case MODE_MAC:
+			if (!strcmp(ptr->mac, mac)) {
+				return ptr;
+			}
+			break;
+		default:
+			assert(0);
 		}
 		ptr = ptr->next;
 	}
