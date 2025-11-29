@@ -8,6 +8,7 @@ LDLIBS+=-ljson-c
 
 .PHONY: all tests
 
+ifeq (yes,$(ENABLE_STATE_FILE))
 all: test_state_file
 
 tests: run_test_state_file
@@ -28,3 +29,8 @@ test_state_file: $(TEST_STATE_FILE_OBJECT)
 
 run_test_state_file: test_state_file
 	./test_state_file
+else
+# all empty
+all:
+tests:
+endif
