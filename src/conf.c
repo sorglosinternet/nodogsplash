@@ -105,6 +105,7 @@ typedef enum {
 	oBinAuth,
 	oPreAuth,
 	oStateFile,
+	oSkipFWEntryCreation,
 	oUseNftables,
 	oNftableName
 } OpCodes;
@@ -158,6 +159,7 @@ static const struct {
 	{ "binauth", oBinAuth },
 	{ "preauth", oPreAuth },
 	{ "statefile", oStateFile },
+	{ "skip_fw_entry_creation", oSkipFWEntryCreation },
 	{ "usenftables", oUseNftables },
 	{ "nftablename", oNftableName },
 	{ NULL, oBadOption },
@@ -237,6 +239,7 @@ config_init(void)
 	config.binauth = NULL;
 	config.preauth = NULL;
 	config.statefile = safe_strdup(DEFAULT_STATE_FILE);
+	config.skip_fw_entry_creation = DEFAULT_SKIP_FW_ENTRY_CREATION;
 	config.use_nftables = DEFAULT_USE_NFTABLES;
 	config.nftable_name = safe_strdup(DEFAULT_NFTABLE_NAME);
 
@@ -371,9 +374,9 @@ parse_empty_ruleset_policy(char *ptr, const char *filename, int lineno)
 	if (!strcasecmp(policy,"passthrough")) {
 		ruleset->emptyrulesetpolicy =  safe_strdup("RETURN");
 	} else if (!strcasecmp(policy,"allow")) {
-		ruleset->emptyrulesetpolicy =  safe_strdup("ACCEPT");
+		ruleset->emptyrulesetpolicy =  safe_strdup("accept");
 	} else if (!strcasecmp(policy,"block")) {
-		ruleset->emptyrulesetpolicy =  safe_strdup("REJECT");
+		ruleset->emptyrulesetpolicy =  safe_strdup("reject");
 	} else {
 		debug(LOG_ERR, "Unknown EmptyRuleSetPolicy directive: %s at line %d in %s", policy, lineno, filename);
 		debug(LOG_ERR, "Exiting...");
@@ -951,6 +954,15 @@ config_read(const char *filename)
 				exit(1);
 			}
 			break;
+		case oSkipFWEntryCreation:
+			if ((value = parse_boolean(p1)) != -1) {
+				config.skip_fw_entry_creation = value;
+			} else {
+				debug(LOG_ERR, "Bad option %s on line %d in %s", s, linenum, filename);
+				debug(LOG_ERR, "Exiting...");
+				exit(1);
+			}
+			break;
 		case oUseNftables:
 			if ((value = parse_boolean(p1)) != -1) {
 				config.use_nftables = value;
@@ -981,7 +993,7 @@ config_read(const char *filename)
 	}
 
 	fclose(fd);
-
+	debug(LOG_INFO, "Skipping firewall entry creation: %d", config.skip_fw_entry_creation);
 	debug(LOG_INFO, "Done reading configuration file '%s'", filename);
 }
 

@@ -151,6 +151,23 @@ iptables_do_command(const char *format, ...)
 	return rc;
 }
 
+/** @internal */
+static int
+_iptables_fw_create_chain(const char table[], const char chain[]) {
+  int rc = 0;
+  rc = iptables_do_command("-t %s -N %s", table, chain);
+  if (rc == 0) {
+    return rc;
+  } else if (rc == 1) {
+    rc = iptables_do_command("-t %s -F %s", table, chain);
+    if (rc == 0) {
+      return rc;
+    }
+  }
+  debug(LOG_ERR, "Failed to create or flush chain %s in table %s", chain, table);
+  return 1;
+}
+
 /**
  * @internal
  * Compiles a struct definition of a firewall rule into a valid iptables
@@ -315,6 +332,7 @@ iptables_fw_init(void)
 	t_MAC *pa;
 	int rc = 0;
 	int macmechanism;
+	bool skip_fw_entry_creation;
 
 	debug(LOG_NOTICE, "Initializing firewall rules");
 
@@ -346,6 +364,7 @@ iptables_fw_init(void)
 	FW_MARK_BLOCKED = config->fw_mark_blocked;
 	FW_MARK_TRUSTED = config->fw_mark_trusted;
 	FW_MARK_AUTHENTICATED = config->fw_mark_authenticated;
+	skip_fw_entry_creation = config->skip_fw_entry_creation;
 	UNLOCK_CONFIG();
 
 	iptables_version = get_iptables_version();
@@ -378,18 +397,19 @@ iptables_fw_init(void)
 	 */
 
 	/* Create new chains in the mangle table */
-	rc |= iptables_do_command("-t mangle -N " CHAIN_TRUSTED); /* for marking trusted packets */
-	rc |= iptables_do_command("-t mangle -N " CHAIN_BLOCKED); /* for marking blocked packets */
-	rc |= iptables_do_command("-t mangle -N " CHAIN_ALLOWED); /* for marking allowed packets */
-	rc |= iptables_do_command("-t mangle -N " CHAIN_INCOMING); /* for counting incoming packets */
-	rc |= iptables_do_command("-t mangle -N " CHAIN_OUTGOING); /* for marking authenticated packets, and for counting outgoing packets */
+	rc |= _iptables_fw_create_chain("mangle", CHAIN_TRUSTED); /* for marking trusted packets */
+	rc |= _iptables_fw_create_chain("mangle", CHAIN_BLOCKED); /* for marking blocked packets */
+	rc |= _iptables_fw_create_chain("mangle", CHAIN_ALLOWED); /* for marking allowed packets */
+	rc |= _iptables_fw_create_chain("mangle", CHAIN_INCOMING); /* for counting incoming packets */
+	rc |= _iptables_fw_create_chain("mangle", CHAIN_OUTGOING); /* for marking authenticated packets, and for counting outgoing packets */
 
-	/* Assign jumps to these new chains */
-	rc |= iptables_do_command("-t mangle -I PREROUTING 1 -i %s -s %s -j " CHAIN_OUTGOING, gw_interface, gw_iprange);
-	rc |= iptables_do_command("-t mangle -I PREROUTING 2 -i %s -s %s -j " CHAIN_BLOCKED, gw_interface, gw_iprange);
-	rc |= iptables_do_command("-t mangle -I PREROUTING 3 -i %s -s %s -j " CHAIN_TRUSTED, gw_interface, gw_iprange);
-	rc |= iptables_do_command("-t mangle -I POSTROUTING 1 -o %s -d %s -j " CHAIN_INCOMING, gw_interface, gw_iprange);
-
+	if(!skip_fw_entry_creation) {
+		/* Assign jumps to these new chains */
+		rc |= iptables_do_command("-t mangle -I PREROUTING 1 -i %s -s %s -j " CHAIN_OUTGOING, gw_interface, gw_iprange);
+		rc |= iptables_do_command("-t mangle -I PREROUTING 2 -i %s -s %s -j " CHAIN_BLOCKED, gw_interface, gw_iprange);
+		rc |= iptables_do_command("-t mangle -I PREROUTING 3 -i %s -s %s -j " CHAIN_TRUSTED, gw_interface, gw_iprange);
+		rc |= iptables_do_command("-t mangle -I POSTROUTING 1 -o %s -d %s -j " CHAIN_INCOMING, gw_interface, gw_iprange);
+  }
 	/* Rules to mark as trusted MAC address packets in mangle PREROUTING */
 	for (; pt != NULL; pt = pt->next) {
 		rc |= iptables_trust_mac(pt->mac);
@@ -437,14 +457,16 @@ iptables_fw_init(void)
 	 
 	if (!config->ip6) {
 		/* Create new chains in nat table */
-		rc |= iptables_do_command("-t nat -N " CHAIN_OUTGOING);
+		rc |= _iptables_fw_create_chain("nat", CHAIN_OUTGOING);
 
 		/*
 		 * nat PREROUTING chain
 		 */
 
 		// packets coming in on gw_interface jump to CHAIN_OUTGOING
-		rc |= iptables_do_command("-t nat -I PREROUTING -i %s -s %s -j " CHAIN_OUTGOING, gw_interface, gw_iprange);
+		if (!skip_fw_entry_creation) {
+			rc |= iptables_do_command("-t nat -I PREROUTING -i %s -s %s -j " CHAIN_OUTGOING, gw_interface, gw_iprange);
+		}
 		// CHAIN_OUTGOING, packets marked TRUSTED  ACCEPT
 		rc |= iptables_do_command("-t nat -A " CHAIN_OUTGOING " -m mark --mark 0x%x%s -j RETURN", FW_MARK_TRUSTED, markmask);
 		// CHAIN_OUTGOING, packets marked AUTHENTICATED  ACCEPT
@@ -470,18 +492,20 @@ iptables_fw_init(void)
 	 */
 
 	// Create new chains in the filter table
-	rc |= iptables_do_command("-t filter -N " CHAIN_TO_INTERNET);
-	rc |= iptables_do_command("-t filter -N " CHAIN_TO_ROUTER);
-	rc |= iptables_do_command("-t filter -N " CHAIN_AUTHENTICATED);
-	rc |= iptables_do_command("-t filter -N " CHAIN_TRUSTED);
-	rc |= iptables_do_command("-t filter -N " CHAIN_TRUSTED_TO_ROUTER);
+	rc |= _iptables_fw_create_chain("filter", CHAIN_TO_INTERNET);
+	rc |= _iptables_fw_create_chain("filter", CHAIN_TO_ROUTER);
+	rc |= _iptables_fw_create_chain("filter", CHAIN_AUTHENTICATED);
+	rc |= _iptables_fw_create_chain("filter", CHAIN_TRUSTED);
+	rc |= _iptables_fw_create_chain("filter", CHAIN_TRUSTED_TO_ROUTER);
 
 	/*
 	 * filter INPUT chain
 	 */
 
 	// packets coming in on gw_interface jump to CHAIN_TO_ROUTER
-	rc |= iptables_do_command("-t filter -I INPUT -i %s -s %s -j " CHAIN_TO_ROUTER, gw_interface, gw_iprange);
+	if (!skip_fw_entry_creation) {
+		rc |= iptables_do_command("-t filter -I INPUT -i %s -s %s -j " CHAIN_TO_ROUTER, gw_interface, gw_iprange);
+	}
 	// CHAIN_TO_ROUTER packets marked BLOCKED DROP
 	rc |= iptables_do_command("-t filter -A " CHAIN_TO_ROUTER " -m mark --mark 0x%x%s -j DROP", FW_MARK_BLOCKED, markmask);
 	// CHAIN_TO_ROUTER, invalid packets DROP
@@ -527,7 +551,6 @@ iptables_fw_init(void)
 		rc |= _iptables_append_ruleset("filter", "users-to-router", CHAIN_TO_ROUTER);
 		/* everything else, REJECT */
 		rc |= iptables_do_command("-t filter -A " CHAIN_TO_ROUTER " -j REJECT --reject-with %s-port-unreachable", ICMP_TYPE);
-
 	}
 
 	/*
@@ -535,7 +558,9 @@ iptables_fw_init(void)
 	 */
 
 	// packets coming in on gw_interface jump to CHAIN_TO_INTERNET
-	rc |= iptables_do_command("-t filter -I FORWARD -i %s -s %s -j " CHAIN_TO_INTERNET, gw_interface, gw_iprange);
+	if (!skip_fw_entry_creation) {
+		rc |= iptables_do_command("-t filter -I FORWARD -i %s -s %s -j " CHAIN_TO_INTERNET, gw_interface, gw_iprange);
+	}
 	// CHAIN_TO_INTERNET packets marked BLOCKED DROP
 	rc |= iptables_do_command("-t filter -A " CHAIN_TO_INTERNET " -m mark --mark 0x%x%s -j DROP", FW_MARK_BLOCKED, markmask);
 	// CHAIN_TO_INTERNET, invalid packets DROP
@@ -754,6 +779,7 @@ iptables_fw_destroy_mention(
 
 /** Insert or delete firewall mangle rules marking a client's packets.
  */
+
 int
 iptables_fw_authenticate(t_client *client)
 {

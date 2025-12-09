@@ -470,7 +470,7 @@ _nftables_setup_table(char *nftable_name, char *gw_interface, char *gw_iprange, 
 		// CHAIN_AUTHENTICATED, related and established packets ACCEPT
 		rc |= nftables_do_command("add rule ip %s " CHAIN_AUTHENTICATED " ct state related,established counter accept", nftable_name);
 		// CHAIN_AUTHENTICATED, append the "authenticated-users" ruleset
-		rc |= _nftables_append_ruleset(nftable_name, "authenticated-users", CHAIN_TRUSTED);
+		rc |= _nftables_append_ruleset(nftable_name, "authenticated-users", CHAIN_AUTHENTICATED);
 		// CHAIN_AUTHENTICATED, any packets not matching that ruleset REJECT
 		rc |= nftables_do_command("add rule ip %s " CHAIN_AUTHENTICATED " reject", nftable_name);
 	}

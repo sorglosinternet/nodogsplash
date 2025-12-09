@@ -94,6 +94,7 @@
 #define DEFAULT_EMPTY_AUTHENTICATED_USERS_POLICY "RETURN"
 #define DEFAULT_EMPTY_PREAUTHENTICATED_USERS_POLICY "REJECT"
 #define DEFAULT_IP6 0
+#define DEFAULT_SKIP_FW_ENTRY_CREATION 0
 #define DEFAULT_USE_NFTABLES 0
 #define DEFAULT_NFTABLE_NAME "nodogsplash"
 /*@}*/
@@ -192,6 +193,7 @@ typedef struct {
 	char *binauth;			/**< @brief external authentication program */
 	char *preauth;			/**< @brief external preauthentication program */
 	char *statefile;		/**< @brief external preauthentication program */
+	bool skip_fw_entry_creation;
 	bool use_nftables;
 	char *nftable_name;
 } s_config;

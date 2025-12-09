@@ -57,8 +57,8 @@
 #include "auth.h"
 #include "client_list.h"
 #include "ndsctl_thread.h"
-#include "fw_abstract.h"
 #include "state_file.h"
+#include "fw_abstract.h"
 #include "util.h"
 
 #include <microhttpd.h>
