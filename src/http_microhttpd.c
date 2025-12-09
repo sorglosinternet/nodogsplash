@@ -17,6 +17,7 @@
  * @author Copyright (C) 2023 Moritz Warning <moritzwarning@web.de>
  */
 
+#include <sys/syslog.h>
 #define _GNU_SOURCE
 
 #include <microhttpd.h>
@@ -763,35 +764,42 @@ static enum MHD_Result send_error(struct MHD_Connection *connection, int error)
 		break;
 
 	case 400:
+		debug(LOG_NOTICE, "HTTP server error %i", error);
 		response = MHD_create_response_from_buffer(strlen(page_400), (char *)page_400, MHD_RESPMEM_PERSISTENT);
 		MHD_add_response_header(response, "Content-Type", mimetype);
 		ret = MHD_queue_response(connection, MHD_HTTP_BAD_REQUEST, response);
 		break;
 
 	case 403:
+		debug(LOG_NOTICE, "HTTP server error %i", error);
 		response = MHD_create_response_from_buffer(strlen(page_403), (char *)page_403, MHD_RESPMEM_PERSISTENT);
 		MHD_add_response_header(response, "Content-Type", mimetype);
 		ret = MHD_queue_response(connection, MHD_HTTP_FORBIDDEN, response);
 		break;
 
 	case 404:
+		debug(LOG_NOTICE, "HTTP server error %i", error);
 		response = MHD_create_response_from_buffer(strlen(page_404), (char *)page_404, MHD_RESPMEM_PERSISTENT);
 		MHD_add_response_header(response, "Content-Type", mimetype);
 		ret = MHD_queue_response(connection, MHD_HTTP_NOT_FOUND, response);
 		break;
 
 	case 500:
+		debug(LOG_ERR, "HTTP server error %i", error);
 		response = MHD_create_response_from_buffer(strlen(page_500), (char *)page_500, MHD_RESPMEM_PERSISTENT);
 		MHD_add_response_header(response, "Content-Type", mimetype);
 		ret = MHD_queue_response(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, response);
 		break;
 
 	case 501:
+		debug(LOG_ERR, "HTTP server error %i", error);
 		response = MHD_create_response_from_buffer(strlen(page_501), (char *)page_501, MHD_RESPMEM_PERSISTENT);
 		MHD_add_response_header(response, "Content-Type", mimetype);
 		ret = MHD_queue_response(connection, MHD_HTTP_NOT_IMPLEMENTED, response);
 		break;
+
 	case 503:
+		debug(LOG_ERR, "HTTP server error %i", error);
 		response = MHD_create_response_from_buffer(strlen(page_503), (char *)page_503, MHD_RESPMEM_PERSISTENT);
 		MHD_add_response_header(response, "Content-Type", mimetype);
 		ret = MHD_queue_response(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, response);
