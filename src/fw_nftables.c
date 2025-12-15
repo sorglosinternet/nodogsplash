@@ -370,7 +370,8 @@ _nftables_setup_table(char *nftable_name, char *gw_interface, char *gw_iprange, 
 	/* for early packet marking */
 	rc |= nftables_do_command("add chain ip %s " CHAIN_MARK " { type filter hook prerouting priority 0; }", nftable_name);
 	/* for marking authenticated packets, and for counting outgoing packets */
-	rc |= nftables_do_command("add chain ip %s " CHAIN_OUTGOING " { type filter hook postrouting priority 0; }", nftable_name);
+	/* priority -125 is right after mangle (-150) */
+	rc |= nftables_do_command("add chain ip %s " CHAIN_OUTGOING " { type filter hook forward priority -125; }", nftable_name);
 	/* for filtering packets for NAT_OUTGOING */
 	rc |= nftables_do_command("add chain ip %s " CHAIN_FILTER_NAT_OUTGOING " { type nat hook prerouting priority -100; }", nftable_name);
 	/* for DNAT towards webinterface */
