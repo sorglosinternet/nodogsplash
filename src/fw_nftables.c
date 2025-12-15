@@ -128,16 +128,23 @@ _nftables_compile(const char table[], const char chain[], t_firewall_rule *rule)
 	}
 
 	snprintf(command, sizeof(command),  "add rule ip %s %s ", table, chain);
-	if (rule->mask != NULL) {
+	if ((rule->mask != NULL) && (strcmp(rule->mask, "0.0.0.0/0") != 0)) {
 		snprintf((command + strlen(command)),
 				 (sizeof(command) - strlen(command)),
 				 "ip daddr %s ", rule->mask);
 	}
 	if (rule->protocol != NULL) {
-		if (strcmp(rule->protocol, "all") != 0) {
+		// if protocol != "all" and != "icmp"
+		if ((strcmp(rule->protocol, "all") != 0) && (strcmp(rule->protocol, "icmp") != 0)) {
 			snprintf((command + strlen(command)),
 					 (sizeof(command) - strlen(command)),
 					 "%s ", rule->protocol);
+		}
+		// if protocol == "icmp"
+		if (strcmp(rule->protocol, "icmp") == 0) {
+			snprintf((command + strlen(command)),
+					 (sizeof(command) - strlen(command)),
+					 "meta l4proto icmp ");
 		}
 	}
 	if (rule->port != NULL) {
@@ -368,7 +375,7 @@ _nftables_setup_table(char *nftable_name, char *gw_interface, char *gw_iprange, 
 	/* for marking authenticated packets */
 	rc |= nftables_do_command("add chain ip %s " CHAIN_AUTHENTICATED, nftable_name);
 	/* for early packet marking */
-	rc |= nftables_do_command("add chain ip %s " CHAIN_MARK " { type filter hook prerouting priority 0; }", nftable_name);
+	rc |= nftables_do_command("add chain ip %s " CHAIN_MARK " { type filter hook prerouting priority raw; }", nftable_name);
 	/* for marking authenticated packets, and for counting outgoing packets */
 	/* priority -125 is right after mangle (-150) */
 	rc |= nftables_do_command("add chain ip %s " CHAIN_OUTGOING " { type filter hook forward priority -125; }", nftable_name);
@@ -381,11 +388,11 @@ _nftables_setup_table(char *nftable_name, char *gw_interface, char *gw_iprange, 
 	rc |= nftables_do_command("add chain ip %s " CHAIN_TRUSTED_TO_ROUTER, nftable_name);
 
 	/* setup nftables sets */
-	rc |= nftables_do_command("add set ip %s blocklist { type ether_addr; }", nftable_name); /* blocked MAC addresses */
-	rc |= nftables_do_command("add set ip %s allowlist { type ether_addr; }", nftable_name); /* allowed MAC addresses */
-	rc |= nftables_do_command("add set ip %s trustlist { type ether_addr; }", nftable_name); /* trusted MAC addresses */
-	rc |= nftables_do_command("add set ip %s authlist_ip { type ipv4_addr ; }", nftable_name); /* authenticated IP addresses */ // TODO: get rid of this set
-	rc |= nftables_do_command("add set ip %s authlist { type ipv4_addr . ether_addr ; }", nftable_name); /* authenticated MAC and IP addresses */
+	rc |= nftables_do_command("add set ip %s blocklist { type ether_addr; counter; }", nftable_name); /* blocked MAC addresses */
+	rc |= nftables_do_command("add set ip %s allowlist { type ether_addr; counter; }", nftable_name); /* allowed MAC addresses */
+	rc |= nftables_do_command("add set ip %s trustlist { type ether_addr; counter; }", nftable_name); /* trusted MAC addresses */
+	rc |= nftables_do_command("add set ip %s authlist_ip { type ipv4_addr ; counter; }", nftable_name); /* authenticated IP addresses */ // TODO: get rid of this set
+	rc |= nftables_do_command("add set ip %s authlist { type ipv4_addr . ether_addr ; counter; }", nftable_name); /* authenticated MAC and IP addresses */
 
 	/* create rules for CHAIN_TO_ROUTER */
 	// drop packets marked blocked
