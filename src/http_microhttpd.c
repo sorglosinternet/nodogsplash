@@ -336,11 +336,13 @@ libmicrohttpd_cb(void *cls,
 
 	rc = get_client_ip(ip, connection);
 	if (rc != 0) {
+		debug(LOG_DEBUG, "Could not find client IP %s", ip);
 		return send_error(connection, 503);
 	}
 
 	rc = get_client_mac(mac, ip);
 	if (rc != 0) {
+		debug(LOG_DEBUG, "Could not find client MAC %s with IP %s", mac, ip);
 		return send_error(connection, 503);
 	}
 
@@ -348,6 +350,7 @@ libmicrohttpd_cb(void *cls,
 	if (!client) {
 		client = add_client(mac, ip);
 		if (!client) {
+			debug(LOG_DEBUG, "Could not add_client() MAC %s with IP %s", mac, ip);
 			return send_error(connection, 503);
 		}
 	}
@@ -458,6 +461,7 @@ static int authenticate_client(struct MHD_Connection *connection,
 	}
 
 	if (rc != 0) {
+		debug(LOG_DEBUG, "auth_client_auth() failed for client ID: %s with MAC %s and IP %s", client->id, client->mac, client->ip);
 		return send_error(connection, 503);
 	}
 
@@ -695,6 +699,7 @@ int send_redirect_temp(struct MHD_Connection *connection, const char *url)
 
 	response = MHD_create_response_from_buffer(strlen(redirect), redirect, MHD_RESPMEM_MUST_FREE);
 	if (!response) {
+		debug(LOG_DEBUG, "MHD_create_response_from_buffer failed: error 503");
 		return send_error(connection, 503);
 	}
 
@@ -913,6 +918,7 @@ static int show_templated_page(struct MHD_Connection *connection, t_client *clie
 	page_tmpl = calloc(size, 1);
 	if (page_tmpl == NULL) {
 		close(page_fd);
+		debug(LOG_DEBUG, "page_tmpl calloc failed - error 503");
 		return send_error(connection, 503);
 	}
 
@@ -920,6 +926,7 @@ static int show_templated_page(struct MHD_Connection *connection, t_client *clie
 	if (page_result == NULL) {
 		close(page_fd);
 		free(page_tmpl);
+		debug(LOG_DEBUG, "page_result calloc failed - error 503");
 		return send_error(connection, 503);
 	}
 
@@ -929,6 +936,7 @@ static int show_templated_page(struct MHD_Connection *connection, t_client *clie
 			free(page_result);
 			free(page_tmpl);
 			close(page_fd);
+			debug(LOG_DEBUG, "read page_fd failed - error 503");
 			return send_error(connection, 503);
 		}
 		bytes += ret;
@@ -939,6 +947,7 @@ static int show_templated_page(struct MHD_Connection *connection, t_client *clie
 	response = MHD_create_response_from_buffer(strlen(page_result), (void *)page_result, MHD_RESPMEM_MUST_FREE);
 	if (!response) {
 		close(page_fd);
+		debug(LOG_DEBUG, "MHD_create_response_from_buffer failed - error 503");
 		return send_error(connection, 503);
 	}
 
@@ -1069,6 +1078,7 @@ static int serve_file(struct MHD_Connection *connection, t_client *client, const
 
 	response = MHD_create_response_from_fd(size, fd);
 	if (!response)
+		debug(LOG_DEBUG, "MHD_create_response_from_fd failed - error 503");
 		return send_error(connection, 503);
 
 	MHD_add_response_header(response, "Content-Type", mimetype);
