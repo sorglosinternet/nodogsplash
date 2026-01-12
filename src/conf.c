@@ -1468,7 +1468,7 @@ char *client_list_mode_str(int client_list_mode)
 {
 	for (int i = 0; i < ARRAY_SIZE(client_list_mode_values); i++) {
 		if (client_list_mode == client_list_mode_values[i].value)
-			return client_list_mode_values->string;
+			return client_list_mode_values[i].string;
 	}
 
 	return "unknown client list mode";
