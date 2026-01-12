@@ -78,7 +78,7 @@ int auth_change_state(t_client *client, const unsigned int new_state, const char
 	const unsigned int state = client->fw_connection_state;
 
 	if (state == new_state) {
-		return -1;
+		return 0;
 	} else if (state == FW_MARK_PREAUTHENTICATED) {
 		if (new_state == FW_MARK_AUTHENTICATED) {
 			iptables_fw_authenticate(client);
