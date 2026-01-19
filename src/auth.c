@@ -78,6 +78,8 @@ int auth_change_state(t_client *client, const unsigned int new_state, const char
 	const unsigned int state = client->fw_connection_state;
 
 	if (state == new_state) {
+		debug(LOG_INFO, "auth_change_state called with same state %s for client:", fw_connection_state_as_string(new_state));
+		client_list_debug(client, LOG_INFO);
 		return 0;
 	} else if (state == FW_MARK_PREAUTHENTICATED) {
 		if (new_state == FW_MARK_AUTHENTICATED) {
