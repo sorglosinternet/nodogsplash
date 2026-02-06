@@ -41,6 +41,7 @@
 #include <arpa/inet.h>
 #include <arpa/inet.h>
 #include <nftables/libnftables.h>
+#include <json-c/json.h>
 #include <string.h>
 
 #include "common.h"
@@ -88,6 +89,31 @@ nftables_do_command(const char *format, ...)
 	} 
 
 	free(fmt_cmd);
+
+	return rc;
+}
+
+/** @internal */
+int
+nftables_do_command_JSON(const char *buf, const char *format, ...)
+{
+	va_list vlist;
+	char *fmt_cmd = NULL;
+	int rc;
+
+	va_start(vlist, format);
+	safe_vasprintf(&fmt_cmd, format, vlist);
+	va_end(vlist);
+
+	nft_ctx_output_set_flags(nft, NFT_CTX_OUTPUT_JSON);
+	rc = nft_run_cmd_from_buffer(nft, fmt_cmd);
+	if (rc != 0) {
+		debug(LOG_INFO, "return value from NFT call %s was %i", fmt_cmd, rc);
+	}
+
+	free(fmt_cmd);
+
+	buf = nft_ctx_get_output_buffer(nft);
 
 	return rc;
 }
@@ -648,6 +674,132 @@ nftables_fw_total_download()
 int
 nftables_fw_counters_update(void)
 {
-	debug(LOG_WARNING, "nftables_fw_counters_update not implemented");
+	t_client *client;
+	s_config *config;
+	char *nftable_name = NULL;
+	const char *json_buf = NULL;
+	int rc = 0;
+
+	LOCK_CONFIG();
+	config = config_get_config();
+	nftable_name = safe_strdup(config->nftable_name);
+	UNLOCK_CONFIG();
+
+	// set authlist == outgoing data (upload to internet)
+	nftables_do_command_JSON(json_buf, "list set ip %s authlist", nftable_name);
+
+	LOCK_CLIENT_LIST();
+
+    struct json_object *root = json_tokener_parse(json_buf);
+    struct json_object *nftables_array;
+    if (json_object_object_get_ex(root, "nftables", &nftables_array)) {
+        int array_len = json_object_array_length(nftables_array);
+        // Loop through nftables array
+        for (int i = 0; i < array_len; i++) {
+            struct json_object *entry = json_object_array_get_idx(nftables_array, i);
+            struct json_object *set_obj;
+            // Find set object
+            if (json_object_object_get_ex(entry, "set", &set_obj)) {
+                struct json_object *elem_array;
+                // find elem array
+                if (json_object_object_get_ex(set_obj, "elem", &elem_array)) {
+                    int elem_len = json_object_array_length(elem_array);
+                    // loop through elem array
+                    for (int j = 0; j < elem_len; j++) {
+                        struct json_object *item = json_object_array_get_idx(elem_array, j);
+                        struct json_object *inner_elem, *val_obj, *concat_array;
+                        // find elem objects inside elem array
+                        if (json_object_object_get_ex(item, "elem", &inner_elem)) {
+							// check that the object has val and concat (authlist is a concat set) of { type ipv4_addr . ether_addr }
+                            if (json_object_object_get_ex(inner_elem, "val", &val_obj) &&
+                                json_object_object_get_ex(val_obj, "concat", &concat_array)) {
+                                // array index 0 is IP, index 1 is MAC
+								if (json_object_array_length(concat_array) >= 2) {
+									rc = 1;
+								}
+
+								struct json_object *ip_obj, *mac_obj, *counter_obj, *bytes_obj;
+								if (
+								rc &&
+								json_object_object_get_ex(inner_elem, "counter", &counter_obj) &&
+								json_object_object_get_ex(counter_obj, "bytes", &bytes_obj)) {
+
+									ip_obj = json_object_array_get_idx(concat_array, 0);
+									mac_obj = json_object_array_get_idx(concat_array, 1);
+									const char *ip_str = json_object_get_string(ip_obj);
+									const char *mac_str = json_object_get_string(mac_obj);
+									long long upload_bytes = json_object_get_int64(bytes_obj);
+									client = client_list_find(mac_str, ip_str);
+									if (client) {
+										upload_bytes += client->counters.outgoing_offset;
+										if (client->counters.outgoing < upload_bytes) {
+											client->counters.outgoing = upload_bytes;
+											client->counters.last_updated = time(NULL);
+											debug(LOG_DEBUG, "IP %s and MAC %s - Updated counter.outgoing to %llu bytes.  Updated last_updated to %d", ip_str, mac_str, upload_bytes, client->counters.last_updated);
+										}
+									} else {
+										debug(LOG_WARNING, "Could not find IP %s and MAC %s in client list", ip_str, mac_str);
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+    json_object_put(root);
+
+	// set authlist_ip == incoming data (client download)
+	nftables_do_command_JSON(json_buf, "list set ip %s authlist_ip", nftable_name);
+	root = json_tokener_parse(json_buf);
+
+	if (json_object_object_get_ex(root, "nftables", &nftables_array)) {
+        int array_len = json_object_array_length(nftables_array);
+        // Loop through nftables array
+        for (int i = 0; i < array_len; i++) {
+            struct json_object *entry = json_object_array_get_idx(nftables_array, i);
+            struct json_object *set_obj;
+            // Find set object
+            if (json_object_object_get_ex(entry, "set", &set_obj)) {
+                struct json_object *elem_array;
+                // find elem array
+                if (json_object_object_get_ex(set_obj, "elem", &elem_array)) {
+                    int elem_len = json_object_array_length(elem_array);
+                    // loop through elem array
+                    for (int j = 0; j < elem_len; j++) {
+                        struct json_object *item = json_object_array_get_idx(elem_array, j);
+                        struct json_object *inner_elem, *val_obj;
+                        // find elem objects inside elem array
+                        if (json_object_object_get_ex(item, "elem", &inner_elem)) {
+							struct json_object *counter_obj, *bytes_obj;
+							// check that the object has val, counter and bytes object
+                            if (json_object_object_get_ex(inner_elem, "val", &val_obj) &&
+								json_object_object_get_ex(inner_elem, "counter", &counter_obj) &&
+								json_object_object_get_ex(counter_obj, "bytes", &bytes_obj)) {
+									const char *ip_str = json_object_get_string(val_obj);
+									long long download_bytes = json_object_get_int64(bytes_obj);
+									client = client_list_find_by_ip(ip_str);
+									if (client) {
+										download_bytes += client->counters.incoming_offset;
+										if (client->counters.incoming < download_bytes) {
+											client->counters.incoming = download_bytes;
+											debug(LOG_DEBUG, "IP %s - Updated counter.incoming to %llu bytes.", ip_str, download_bytes);
+										}
+									} else {
+										debug(LOG_WARNING, "Could not find IP %s in client list", ip_str);
+									}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	UNLOCK_CLIENT_LIST();
+
+	free(nftable_name);
 	return 0;
 }
