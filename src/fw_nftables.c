@@ -496,18 +496,18 @@ _nftables_setup_table(char *nftable_name, char *gw_interface, char *gw_iprange, 
 	rc |= nftables_do_command("add rule ip %s " CHAIN_TO_INTERNET " counter reject", nftable_name);
 
 	/* create rules for CHAIN_MARK */
-	rc |= nftables_do_command("add rule ip %s " CHAIN_MARK " iifname %s ip saddr %s ether saddr @blocklist mark set 0x%x / 0x%x", nftable_name, gw_interface, gw_iprange, FW_MARK_BLOCKED, FW_MARK_MASK);
-	rc |= nftables_do_command("add rule ip %s " CHAIN_MARK " iifname %s ip saddr %s ether saddr @trustlist mark set 0x%x / 0x%x", nftable_name, gw_interface, gw_iprange, FW_MARK_TRUSTED, FW_MARK_MASK);
-	rc |= nftables_do_command("add rule ip %s " CHAIN_MARK " iifname %s ip saddr . ether saddr @authlist mark set 0x%x / 0x%x", nftable_name, gw_interface, FW_MARK_AUTHENTICATED, FW_MARK_MASK);
+	rc |= nftables_do_command("add rule ip %s " CHAIN_MARK " iifname %s ip saddr %s ether saddr @blocklist meta mark set 0x%x / 0x%x", nftable_name, gw_interface, gw_iprange, FW_MARK_BLOCKED, FW_MARK_MASK);
+	rc |= nftables_do_command("add rule ip %s " CHAIN_MARK " iifname %s ip saddr %s ether saddr @trustlist update @trustlist { counter} meta mark set 0x%x / 0x%x", nftable_name, gw_interface, gw_iprange, FW_MARK_TRUSTED, FW_MARK_MASK);
+	rc |= nftables_do_command("add rule ip %s " CHAIN_MARK " iifname %s ip saddr . ether saddr @authlist update @authlist { counter } meta mark set 0x%x / 0x%x", nftable_name, gw_interface, FW_MARK_AUTHENTICATED, FW_MARK_MASK);
 	if (MAC_ALLOW == macmechanism) {
 		rc |= nftables_do_command("add rule ip %s " CHAIN_MARK " iifname %s ip saddr %s ether saddr @allowlist return", nftable_name, gw_interface, gw_iprange);
 		// rule to mark everything blocked if config macmechanism is allow
 		// this MUST be the last rule in the chain
-		rc |= nftables_do_command("add rule ip %s " CHAIN_MARK " iifname %s mark set 0x%x  / 0x%x", nftable_name, gw_interface, FW_MARK_BLOCKED, FW_MARK_MASK);
+		rc |= nftables_do_command("add rule ip %s " CHAIN_MARK " iifname %s meta mark set 0x%x  / 0x%x", nftable_name, gw_interface, FW_MARK_BLOCKED, FW_MARK_MASK);
 	}
 
 	/* create rules for CHAIN_OUTGOING */
-	rc |= nftables_do_command("add rule ip %s " CHAIN_OUTGOING " oifname %s ip daddr @authlist_ip mark set 0x%x / 0x%x accept", nftable_name, gw_interface, FW_MARK_AUTHENTICATED, FW_MARK_MASK);
+	rc |= nftables_do_command("add rule ip %s " CHAIN_OUTGOING " oifname %s ip daddr @authlist_ip update @authlist_ip { counter } meta mark set 0x%x / 0x%x", nftable_name, gw_interface, FW_MARK_AUTHENTICATED, FW_MARK_MASK);
 
 	/* create rules for CHAIN_FILTER_NAT_OUTGOING */
 	rc |= nftables_do_command("add rule ip %s " CHAIN_FILTER_NAT_OUTGOING " iifname %s ip saddr %s jump " CHAIN_NAT_OUTGOING, nftable_name, gw_interface, gw_iprange);
