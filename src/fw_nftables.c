@@ -84,8 +84,8 @@ nftables_do_command(const char *format, ...)
 	nft_ctx_output_set_flags(nft, 0);
 	rc = nft_run_cmd_from_buffer(nft, fmt_cmd);
 	if (rc != 0) {
-		debug(LOG_INFO, "return value from NFT call was %i", rc);
-	} 
+		debug(LOG_INFO, "return value from NFT call was %i with command: %s", rc, fmt_cmd);
+	}
 
 	free(fmt_cmd);
 
