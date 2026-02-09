@@ -412,7 +412,7 @@ _nftables_setup_table(char *nftable_name, char *gw_interface, char *gw_iprange, 
 	} else {
 		rc |= nftables_do_command("add rule ip %s " CHAIN_TO_ROUTER " mark and 0x%x == 0x%x jump " CHAIN_TRUSTED_TO_ROUTER, nftable_name, FW_MARK_MASK, FW_MARK_TRUSTED);
 		// CHAIN_TRUSTED_TO_ROUTER, related and established packets ACCEPT
-		rc |= nftables_do_command("add rule ip %s " CHAIN_TRUSTED_TO_ROUTER " ct state related,established counter accept");
+		rc |= nftables_do_command("add rule ip %s " CHAIN_TRUSTED_TO_ROUTER " ct state related,established counter accept", nftable_name);
 		// CHAIN_TRUSTED_TO_ROUTER, append the "trusted-users-to-router" ruleset
 		rc |= _nftables_append_ruleset(nftable_name, "trusted-users-to-router", CHAIN_TRUSTED_TO_ROUTER);
 		// CHAIN_TRUSTED_TO_ROUTER, any packets not matching that ruleset REJECT
