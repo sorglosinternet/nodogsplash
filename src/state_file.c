@@ -14,6 +14,7 @@
 #include "client_list.h"
 #include "debug.h"
 #include "safe.h"
+#include "fw_common.h"
 
 #define NDS_JSON_EXPORT_VERSION 1
 #define GOTO_ERR(_err, x) if ((x)) { goto _err; }
@@ -33,7 +34,6 @@ state_file_export_client(t_client *client)
 	GOTO_ERR(err, json_object_object_add(cli, "session_end", json_object_new_uint64(client->session_end)));
 	GOTO_ERR(err, json_object_object_add(cli, "download_limit", json_object_new_int64(client->download_limit)));
 	GOTO_ERR(err, json_object_object_add(cli, "upload_limit", json_object_new_int64(client->upload_limit)));
-	GOTO_ERR(err, json_object_object_add(cli, "id", json_object_new_uint64(client->id)));
 
 	json_object *counters = json_object_new_object();
 	if (!counters)
@@ -144,20 +144,13 @@ state_file_import_client(json_object *json_client)
 	t_client *client = NULL;
 	const char *mac = NULL;
 	const char *ip = NULL;
-	unsigned id;
+
 	JSON_GET_FIELD(mac, err, json_client, "mac", json_type_string, json_object_get_string);
 	JSON_GET_FIELD(ip, err, json_client, "ip", json_type_string, json_object_get_string);
-	JSON_GET_FIELD(id, err, json_client, "id", json_type_int, json_object_get_uint64);
 
 	client = client_list_find(mac, ip);
 	if (client) {
 		debug(LOG_ERR, "Found a duplicate client containing same ip & mac (%s / %s) !", ip, mac);
-		return -1;
-	}
-
-	client = client_list_find_by_id(id);
-	if (client) {
-		debug(LOG_ERR, "Found a duplicate client containing same id (%d)!", id);
 		return -1;
 	}
 
@@ -173,7 +166,6 @@ state_file_import_client(json_object *json_client)
 		free(client->token);
 
 	client->token = safe_strdup(token);
-	client->id = id;
 
 	JSON_GET_FIELD(client->session_start, err, json_client, "session_start", json_type_int, json_object_get_uint64);
 	JSON_GET_FIELD(client->session_end, err, json_client, "session_end", json_type_int, json_object_get_uint64);
@@ -186,8 +178,8 @@ state_file_import_client(json_object *json_client)
 	JSON_GET_FIELD(client->counters.outgoing, err, counters, "outgoing", json_type_int, json_object_get_uint64);
 	JSON_GET_FIELD(client->counters.last_updated, err, counters, "last_updated", json_type_int, json_object_get_uint64);
 
-	unsigned int fw_connection_state = -1;
-	JSON_GET_FIELD(fw_connection_state, err, json_client, "fw_connection_state", json_type_int, json_object_get_int64);
+	unsigned int fw_connection_state = FW_MARK_PREAUTHENTICATED;
+	JSON_GET_FIELD(fw_connection_state, err, json_client, "fw_connection_state", json_type_int, json_object_get_int);
 
 	auth_change_state(client, fw_connection_state, "import_state_file");
 
