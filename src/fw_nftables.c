@@ -469,7 +469,7 @@ _nftables_setup_table(char *nftable_name, char *gw_interface, char *gw_iprange, 
 	 *    jump to CHAIN_AUTHENTICATED, and load and use authenticated-users ruleset
 	 */
 	if (is_empty_ruleset("authenticated-users")) {
-		rc |= nftables_do_command("add rule ip %s " CHAIN_TO_INTERNET " mark and 0x%x == 0x%x %s", nftable_name, get_empty_ruleset_policy("authenticated-users"));
+		rc |= nftables_do_command("add rule ip %s " CHAIN_TO_INTERNET " mark and 0x%x == 0x%x %s", nftable_name, FW_MARK_MASK, FW_MARK_AUTHENTICATED, get_empty_ruleset_policy("authenticated-users"));
 	} else {
 		rc |= nftables_do_command("add rule ip %s " CHAIN_TO_INTERNET " mark and 0x%x == 0x%x jump " CHAIN_AUTHENTICATED, nftable_name, FW_MARK_MASK, FW_MARK_AUTHENTICATED);
 		// CHAIN_AUTHENTICATED, related and established packets ACCEPT
