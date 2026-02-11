@@ -565,11 +565,10 @@ nftables_fw_authenticate(t_client *client)
 	s_config *config;
 	char upload_ifbname[16];
 	char *nftable_name = NULL;
-	config = config_get_config();
-	sprintf(upload_ifbname, "ifb%d", config->upload_ifb);
-
+	
 	LOCK_CONFIG();
 	config = config_get_config();
+	sprintf(upload_ifbname, "ifb%d", config->upload_ifb);
 	traffic_control = config->traffic_control;
 	download_limit = config->download_limit;
 	upload_limit = config->upload_limit;
@@ -596,17 +595,14 @@ nftables_fw_authenticate(t_client *client)
 int
 nftables_fw_deauthenticate(t_client *client)
 {
-	int download_limit, upload_limit, traffic_control;
+	int rc = 0, download_limit, upload_limit, traffic_control;
 	s_config *config;
 	char upload_ifbname[16];
 	char *nftable_name = NULL;
-	int rc = 0;
-
-	config = config_get_config();
-	sprintf(upload_ifbname, "ifb%d", config->upload_ifb);
 
 	LOCK_CONFIG();
 	config = config_get_config();
+	sprintf(upload_ifbname, "ifb%d", config->upload_ifb);
 	traffic_control = config->traffic_control;
 	download_limit = config->download_limit;
 	upload_limit = config->upload_limit;
