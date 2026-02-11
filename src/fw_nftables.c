@@ -440,6 +440,8 @@ _nftables_setup_table(char *nftable_name, char *gw_interface, char *gw_iprange, 
 	rc |= nftables_do_command("add rule ip %s " CHAIN_TO_INTERNET " mark and 0x%x == 0x%x counter drop", nftable_name, FW_MARK_MASK, FW_MARK_BLOCKED);
 	// DROP invalid packets
 	rc |= nftables_do_command("add rule ip %s " CHAIN_TO_INTERNET " ct state invalid counter drop", nftable_name);
+	// Accept established traffic. Required for TrustList clients (missing tc connmark).
+	rc |= nftables_do_command("add rule ip %s " CHAIN_TO_INTERNET " ct state related,established counter accept", nftable_name);
 	rc |= nftables_do_command("add rule ip %s " CHAIN_TO_INTERNET " tcp flags syn / syn,rst counter tcp option maxseg size set rt mtu", nftable_name);
 
 	/* CHAIN_TO_INTERNET, packets marked TRUSTED: */
