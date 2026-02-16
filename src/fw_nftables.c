@@ -19,13 +19,12 @@
  \********************************************************************/
 
 /** @internal
-  @file fw_iptables.c
-  @brief Firewall iptables functions
+  @file fw_nftables.c
+  @brief Firewall nftables functions using libjansson
   @author Copyright (C) 2004 Philippe April <papril777@yahoo.com>
   @author Copyright (C) 2007 Paul Kube <nodogsplash@kokoro.ucsd.edu>
  */
 
-#include <stddef.h>
 #define _GNU_SOURCE
 
 #include <stdio.h>
@@ -39,12 +38,12 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <arpa/inet.h>
+#include <time.h>
+
 #include <nftables/libnftables.h>
-#include <string.h>
+#include <jansson.h>
 
 #include "common.h"
-
 #include "safe.h"
 #include "conf.h"
 #include "client_list.h"
@@ -55,7 +54,13 @@
 extern pthread_mutex_t client_list_mutex;
 extern pthread_mutex_t config_mutex;
 
+static pthread_mutex_t nft_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 struct nft_ctx *nft;
+
+/* Cumulative traffic counters since program start */
+static unsigned long long int total_upload_bytes = 0;
+static unsigned long long int total_download_bytes = 0;
 
 /**
  * Make nonzero to supress the error output of the firewall during destruction.
@@ -78,17 +83,70 @@ nftables_do_command(const char *format, ...)
 	int rc;
 
 	va_start(vlist, format);
-	safe_vasprintf(&fmt_cmd, format, vlist);
+	if (vasprintf(&fmt_cmd, format, vlist) == -1) fmt_cmd = NULL;
 	va_end(vlist);
+
+	if (!fmt_cmd) return -1;
+
+	pthread_mutex_lock(&nft_mutex);
 
 	nft_ctx_output_set_flags(nft, 0);
 	rc = nft_run_cmd_from_buffer(nft, fmt_cmd);
+
+	pthread_mutex_unlock(&nft_mutex);
+
 	if (rc != 0) {
 		debug(LOG_INFO, "return value from NFT call was %i with command: %s", rc, fmt_cmd);
 	}
 
 	free(fmt_cmd);
 
+	return rc;
+}
+
+/** @internal - Executes command and returns JSON output string */
+int
+nftables_do_json_command(char **output, const char *format, ...)
+{
+	va_list vlist;
+	char *fmt_cmd = NULL;
+	int rc;
+
+	va_start(vlist, format);
+	if (vasprintf(&fmt_cmd, format, vlist) == -1) fmt_cmd = NULL;
+	va_end(vlist);
+
+	if (!fmt_cmd) return -1;
+
+	pthread_mutex_lock(&nft_mutex);
+
+	nft_ctx_output_set_flags(nft, NFT_CTX_OUTPUT_JSON);
+	/* Important: Clear buffer before new command */
+	nft_ctx_unbuffer_output(nft);
+	nft_ctx_buffer_output(nft);
+
+	debug(LOG_DEBUG, "Executing nft JSON command: %s", fmt_cmd);
+
+	rc = nft_run_cmd_from_buffer(nft, fmt_cmd);
+
+	if (rc == 0) {
+        const char *buf = nft_ctx_get_output_buffer(nft);
+        if (buf && buf[0] != '\0') {
+            if (output) *output = strdup(buf);
+        } else {
+            debug(LOG_WARNING, "NFT command succeeded but returned empty buffer");
+        }
+    } else {
+        const char *buf = nft_ctx_get_output_buffer(nft);
+        debug(LOG_ERR, "NFT Error (rc=%d) executing: %s\nOutput: %s", rc, fmt_cmd, buf ? buf : "(null)");
+    }
+
+	nft_ctx_unbuffer_output(nft);
+	nft_ctx_output_set_flags(nft, 0);
+
+	pthread_mutex_unlock(&nft_mutex);
+	
+	free(fmt_cmd);
 	return rc;
 }
 
@@ -269,7 +327,6 @@ nftables_fw_init(void)
 {
 	s_config *config;
 	char *gw_interface = NULL;
-	char *gw_ip = NULL;
 	char *gw_address = NULL;
 	char *gw_iprange = NULL;
 	int gw_port = 0;
@@ -339,7 +396,6 @@ nftables_fw_init(void)
 
 	free(gw_interface);
 	free(gw_iprange);
-	free(gw_ip);
 	free(gw_address);
 	free(nftable_name);
 
@@ -571,6 +627,7 @@ nftables_fw_authenticate(t_client *client)
 	LOCK_CONFIG();
 	config = config_get_config();
 	sprintf(upload_ifbname, "ifb%d", config->upload_ifb);
+
 	traffic_control = config->traffic_control;
 	download_limit = config->download_limit;
 	upload_limit = config->upload_limit;
@@ -605,6 +662,7 @@ nftables_fw_deauthenticate(t_client *client)
 	LOCK_CONFIG();
 	config = config_get_config();
 	sprintf(upload_ifbname, "ifb%d", config->upload_ifb);
+	
 	traffic_control = config->traffic_control;
 	download_limit = config->download_limit;
 	upload_limit = config->upload_limit;
@@ -624,28 +682,217 @@ nftables_fw_deauthenticate(t_client *client)
 	return rc;
 }
 
-/** Return the total upload usage in bytes */
-unsigned long long int
-nftables_fw_total_upload()
+/* ---------- nftables JSON parsing helpers using libjansson ---------- */
+
+/**
+ * Struktur für einen einzelnen Zähler-Eintrag.
+ * Optimiert: Zeigt direkt auf Jansson-Daten (Zero-Copy), um Speicher zu sparen.
+ */
+struct nft_counter_entry {
+	const char *ip;  // Pointer in den Jansson-Speicher
+	const char *mac; // Pointer in den Jansson-Speicher (nullable)
+	uint64_t bytes;
+};
+
+/**
+ * Vergleichsfunktion für bsearch/qsort.
+ */
+static int
+_nft_entry_cmp(const void *a, const void *b)
 {
-	debug(LOG_WARNING, "nftables_fw_total_upload not implemented");
-	return 0;
+	const struct nft_counter_entry *ea = (const struct nft_counter_entry *)a;
+	const struct nft_counter_entry *eb = (const struct nft_counter_entry *)b;
+	
+	if (!ea->ip || !eb->ip) return 0;
+	return strcmp(ea->ip, eb->ip);
 }
 
-
-// TODO: rewrite this for NFTABLES, will not work at the moment
-/** Return the total download usage in bytes */
-unsigned long long int
-nftables_fw_total_download()
+/**
+ * Parst ein nftables "set" JSON-Objekt und füllt das Array.
+ * Nutzt direkte Pointer auf Jansson-Strings (Zero-Copy).
+ */
+static size_t
+_parse_nft_set(json_t *set_wrapper, struct nft_counter_entry **entries, size_t *capacity)
 {
-	debug(LOG_WARNING, "nftables_fw_total_download not implemented");
-	return 0;
+	json_t *elem_arr = json_object_get(set_wrapper, "elem");
+	if (!json_is_array(elem_arr)) return 0;
+
+	size_t count = 0;
+	size_t index;
+	json_t *wrapper;
+
+	/* Speicher reservieren (oder vergrößern) */
+	size_t arr_size = json_array_size(elem_arr);
+	if (arr_size > *capacity) {
+		*capacity = arr_size + 16; // Kleiner Puffer
+		struct nft_counter_entry *new_ptr = realloc(*entries, *capacity * sizeof(struct nft_counter_entry));
+		if (!new_ptr) return 0; // Out of Memory
+		*entries = new_ptr;
+	}
+
+	/* Array durchlaufen */
+	json_array_foreach(elem_arr, index, wrapper) {
+		json_t *elem = json_object_get(wrapper, "elem");
+		if (!elem) continue;
+
+		json_t *val = json_object_get(elem, "val");
+		json_t *counter = json_object_get(elem, "counter");
+		
+		if (!val || !counter) continue;
+
+		const char *ip_str = NULL;
+		const char *mac_str = NULL;
+
+		/* Fall 1: Einfache IP (z.B. authlist_ip) */
+		if (json_is_string(val)) {
+			ip_str = json_string_value(val);
+		} 
+		/* Fall 2: Konkatenation { "concat": ["ip", "mac"] } (z.B. authlist) */
+		else if (json_is_object(val)) {
+			json_t *concat = json_object_get(val, "concat");
+			if (json_is_array(concat) && json_array_size(concat) >= 2) {
+				ip_str = json_string_value(json_array_get(concat, 0));
+				mac_str = json_string_value(json_array_get(concat, 1));
+			}
+		}
+
+		if (ip_str) {
+			uint64_t bytes = 0;
+			json_t *j_bytes = json_object_get(counter, "bytes");
+			if (json_is_integer(j_bytes)) {
+				bytes = json_integer_value(j_bytes);
+			}
+
+			/* WICHTIG: Nur Pointer kopieren, kein strdup() */
+			(*entries)[count].ip = ip_str;
+			(*entries)[count].mac = mac_str;
+			(*entries)[count].bytes = bytes;
+			count++;
+		}
+	}
+
+	return count;
 }
 
-/** Update the counters of all the clients in the client list */
+unsigned long long int nftables_fw_total_upload() { return total_upload_bytes; }
+unsigned long long int nftables_fw_total_download() { return total_download_bytes; }
+
 int
 nftables_fw_counters_update(void)
 {
-	debug(LOG_WARNING, "nftables_fw_counters_update not implemented");
+	s_config *config;
+	char *nftable_name = NULL;
+	char *json_output = NULL;
+	int rc;
+
+	/* Arrays für Upload (authlist) und Download (authlist_ip) */
+	struct nft_counter_entry *up_entries = NULL;
+	struct nft_counter_entry *down_entries = NULL;
+	size_t up_count = 0, down_count = 0;
+	size_t up_cap = 0, down_cap = 0;
+
+	LOCK_CONFIG();
+	config = config_get_config();
+	nftable_name = safe_strdup(config->nftable_name);
+	UNLOCK_CONFIG();
+
+	/* 1. JSON von nftables holen */
+	rc = nftables_do_json_command(&json_output, "list table ip %s", nftable_name);
+	free(nftable_name);
+
+	if (rc != 0 || !json_output) {
+		if (json_output) free(json_output);
+		return -1;
+	}
+
+	/* 2. JSON Parsen */
+	json_error_t error;
+	json_t *root = json_loads(json_output, 0, &error);
+	free(json_output); // Raw String freigeben, wir haben jetzt das Jansson-Objekt
+
+	if (!root) {
+		debug(LOG_ERR, "JSON load error: %s (line %d)", error.text, error.line);
+		return -1;
+	}
+
+	json_t *nftables_arr = json_object_get(root, "nftables");
+	if (json_is_array(nftables_arr)) {
+		size_t index;
+		json_t *entry;
+
+		json_array_foreach(nftables_arr, index, entry) {
+			json_t *set = json_object_get(entry, "set");
+			if (!set) continue;
+
+			const char *name = json_string_value(json_object_get(set, "name"));
+			if (!name) continue;
+
+			if (strcmp(name, "authlist") == 0) {
+				up_count = _parse_nft_set(set, &up_entries, &up_cap);
+			} else if (strcmp(name, "authlist_ip") == 0) {
+				down_count = _parse_nft_set(set, &down_entries, &down_cap);
+			}
+		}
+	}
+
+	/* 3. Sortieren für bsearch */
+	if (up_count > 0)
+		qsort(up_entries, up_count, sizeof(struct nft_counter_entry), _nft_entry_cmp);
+	if (down_count > 0)
+		qsort(down_entries, down_count, sizeof(struct nft_counter_entry), _nft_entry_cmp);
+
+	/* 4. Client-Liste aktualisieren */
+	LOCK_CLIENT_LIST();
+	t_client *client = client_get_first_client();
+	
+	struct nft_counter_entry search_key;
+	struct nft_counter_entry *result;
+
+	while (client != NULL) {
+		search_key.ip = client->ip; // Pointer reicht für Suche
+
+		/* --- UPLOAD (Outgoing) --- */
+		if (up_count > 0) {
+			result = bsearch(&search_key, up_entries, up_count, sizeof(struct nft_counter_entry), _nft_entry_cmp);
+			
+			if (result && result->mac && strcasecmp(client->mac, result->mac) == 0) {
+				/* Offset Logik analog zu fw_iptables.c */
+				uint64_t current_total = result->bytes + client->counters.outgoing_offset;
+
+				if (current_total > client->counters.outgoing) {
+					total_upload_bytes += (current_total - client->counters.outgoing);
+					client->counters.outgoing = current_total;
+					client->counters.last_updated = time(NULL);
+				}
+			}
+		}
+
+		/* --- DOWNLOAD (Incoming) --- */
+		if (down_count > 0) {
+			result = bsearch(&search_key, down_entries, down_count, sizeof(struct nft_counter_entry), _nft_entry_cmp);
+			if (result) {
+				/* Offset Logik analog zu fw_iptables.c */
+				uint64_t current_total = result->bytes + client->counters.incoming_offset;
+
+				if (current_total > client->counters.incoming) {
+					total_download_bytes += (current_total - client->counters.incoming);
+					client->counters.incoming = current_total;
+					client->counters.last_updated = time(NULL); // Update timestamp auch bei Download
+				}
+			}
+		}
+
+		client = client->next;
+	}
+	UNLOCK_CLIENT_LIST();
+
+	/* 5. Cleanup */
+	// Jansson root freigeben -> Damit werden alle Strings (ip, mac) ungültig!
+	json_decref(root); 
+
+	// Hilfsarrays freigeben (Nur die Container, Inhalt war ja "geliehen")
+	free(up_entries);
+	free(down_entries);
+
 	return 0;
 }
