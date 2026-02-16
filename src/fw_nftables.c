@@ -3,29 +3,28 @@
  * modify it under the terms of the GNU General Public License as   *
  * published by the Free Software Foundation; either version 2 of   *
  * the License, or (at your option) any later version.              *
- *                                                                  *
+ * *
  * This program is distributed in the hope that it will be useful,  *
  * but WITHOUT ANY WARRANTY; without even the implied warranty of   *
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the    *
  * GNU General Public License for more details.                     *
- *                                                                  *
+ * *
  * You should have received a copy of the GNU General Public License*
  * along with this program; if not, contact:                        *
- *                                                                  *
+ * *
  * Free Software Foundation           Voice:  +1-617-542-5942       *
  * 59 Temple Place - Suite 330        Fax:    +1-617-542-2652       *
  * Boston, MA  02111-1307,  USA       gnu@gnu.org                   *
- *                                                                  *
+ * *
  \********************************************************************/
 
 /** @internal
-  @file fw_iptables.c
-  @brief Firewall iptables functions
+  @file fw_nftables.c
+  @brief Firewall nftables functions using libjansson
   @author Copyright (C) 2004 Philippe April <papril777@yahoo.com>
   @author Copyright (C) 2007 Paul Kube <nodogsplash@kokoro.ucsd.edu>
  */
 
-#include <stddef.h>
 #define _GNU_SOURCE
 
 #include <stdio.h>
@@ -39,12 +38,11 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <arpa/inet.h>
+#include <time.h>
 #include <nftables/libnftables.h>
-#include <string.h>
+#include <jansson.h>
 
 #include "common.h"
-
 #include "safe.h"
 #include "conf.h"
 #include "client_list.h"
@@ -89,6 +87,34 @@ nftables_do_command(const char *format, ...)
 
 	free(fmt_cmd);
 
+	return rc;
+}
+
+/** @internal - Executes command and returns JSON output string */
+int
+nftables_do_json_command(const char **output, const char *format, ...)
+{
+	va_list vlist;
+	char *fmt_cmd = NULL;
+	int rc;
+
+	va_start(vlist, format);
+	safe_vasprintf(&fmt_cmd, format, vlist);
+	va_end(vlist);
+
+	nft_ctx_unbuffer_output(nft);
+	nft_ctx_output_set_flags(nft, NFT_CTX_OUTPUT_JSON);
+	nft_ctx_buffer_output(nft);
+
+	rc = nft_run_cmd_from_buffer(nft, fmt_cmd);
+
+	if (rc != 0) {
+		debug(LOG_INFO, "return value from NFT call was %i with command: %s", rc, fmt_cmd);
+	}
+
+	*output = nft_ctx_get_output_buffer(nft);
+
+	free(fmt_cmd);
 	return rc;
 }
 
@@ -269,7 +295,6 @@ nftables_fw_init(void)
 {
 	s_config *config;
 	char *gw_interface = NULL;
-	char *gw_ip = NULL;
 	char *gw_address = NULL;
 	char *gw_iprange = NULL;
 	int gw_port = 0;
@@ -339,7 +364,6 @@ nftables_fw_init(void)
 
 	free(gw_interface);
 	free(gw_iprange);
-	free(gw_ip);
 	free(gw_address);
 	free(nftable_name);
 
@@ -632,7 +656,6 @@ nftables_fw_total_upload()
 	return 0;
 }
 
-
 // TODO: rewrite this for NFTABLES, will not work at the moment
 /** Return the total download usage in bytes */
 unsigned long long int
@@ -642,10 +665,134 @@ nftables_fw_total_download()
 	return 0;
 }
 
-/** Update the counters of all the clients in the client list */
 int
 nftables_fw_counters_update(void)
 {
-	debug(LOG_WARNING, "nftables_fw_counters_update not implemented");
+	s_config *config;
+	char *nftable_name = NULL;
+	const char *output = NULL;
+	int rc;
+	json_error_t jerror;
+	json_t *jroot;
+
+	/* Variablen für Performance-Messung */
+    struct timespec ts_start, ts_end;
+    long time_diff_us;
+    int processed_clients = 0;
+
+	/* --- Start Performance Messung des kritischen Abschnitts --- */
+    clock_gettime(CLOCK_MONOTONIC, &ts_start);
+
+	LOCK_CONFIG();
+	config = config_get_config();
+	nftable_name = safe_strdup(config->nftable_name);
+	UNLOCK_CONFIG();
+
+	rc = nftables_do_json_command(&output, "list table ip %s", nftable_name);
+
+	if (rc != 0) {
+		return -1;
+	}
+
+	jroot = json_loads(output, 0, &jerror);
+	if (!jroot) {
+		debug(LOG_ERR, "JSON load error: %s (line %d)", jerror.text, jerror.line);
+		printf("JSON Buffer: %s", output);
+		return -1;
+	}
+
+	json_t *nftables_arr = json_object_get(jroot, "nftables");
+	if (json_is_object(nftables_arr)) {
+		size_t index;
+		json_t *entry;
+		t_client *client;
+
+		LOCK_CLIENT_LIST();
+		debug(LOG_DEBUG, "nftables_fw_counters_update");
+		json_array_foreach(nftables_arr, index, entry) {
+			json_t *set_wrapper = json_object_get(entry, "set");
+			if (set_wrapper) {
+				const char *sname = json_string_value(json_object_get(set_wrapper, "name"));
+				json_t *elem_arr = json_object_get(set_wrapper, "elem");
+				if (sname && elem_arr && json_is_array(elem_arr)) {
+					if (strcmp(sname, "authlist") == 0) {
+						// parse authlist as outgoing traffic (upload)
+						size_t index_elem = 0;
+						json_t *wrapper_elem;
+						json_array_foreach(elem_arr, index_elem, wrapper_elem)  {
+							json_t *elem_obj = json_object_get(wrapper_elem, "elem");
+								json_t *val_obj = json_object_get(elem_obj, "val");
+								json_t *counter_obj = json_object_get(elem_obj, "counter");
+								uint64_t bytes = 0;
+								const char *ip = NULL;
+								const char *mac = NULL;
+								if (counter_obj) {
+									json_t *b = json_object_get(counter_obj, "bytes");
+									if (json_is_integer(b)) bytes = json_integer_value(b);
+								}
+								if (val_obj) {
+									// in authlist, IP and MAC are in a concatenation
+									if (json_is_object(val_obj)) {
+										json_t *concat_arr = json_object_get(val_obj, "concat");
+										if (json_is_array(concat_arr)) {
+											if (json_array_size(concat_arr) >= 2) {
+												ip = json_string_value(json_array_get(concat_arr, 0));
+												mac = json_string_value(json_array_get(concat_arr, 1));
+												if ((client = client_list_find(mac, ip))) {
+													bytes += client->counters.outgoing_offset;
+													if (bytes > client->counters.outgoing) {
+														client->counters.outgoing = bytes;
+														client->counters.last_updated = time(NULL);
+													}
+												}
+											}
+										}
+									}
+								}
+						}
+					} else if (strcmp(sname, "authlist_ip") == 0) {
+						// parse authlist_ip as incoming traffic (download)
+						size_t index_elem = 0;
+						json_t *wrapper_elem;
+						json_array_foreach(elem_arr, index_elem, wrapper_elem)  {
+							json_t *elem_obj = json_object_get(wrapper_elem, "elem");
+								json_t *val_obj = json_object_get(elem_obj, "val");
+								json_t *counter_obj = json_object_get(elem_obj, "counter");
+								uint64_t bytes = 0;
+								const char *ip = NULL;
+								if (counter_obj) {
+									json_t *b = json_object_get(counter_obj, "bytes");
+									if (json_is_integer(b)) bytes = json_integer_value(b);
+								}
+								if (val_obj) {
+									// in authlist_ip, IP is a string without a concatenation
+									if (json_is_object(val_obj)) {
+										ip = json_string_value(val_obj);
+										if ((client = client_list_find_by_ip(ip))) {
+											bytes += client->counters.incoming_offset;
+											if (bytes > client->counters.incoming) {
+												client->counters.incoming = bytes;
+											}
+										}
+									}
+								}
+							}
+					}
+				}
+			}
+		}
+		UNLOCK_CLIENT_LIST();
+	}
+	    /* --- Ende Performance Messung --- */
+    clock_gettime(CLOCK_MONOTONIC, &ts_end);
+
+    /* Berechnung der Dauer in Mikrosekunden */
+    time_diff_us = (ts_end.tv_sec - ts_start.tv_sec) * 1000000 + 
+                   (ts_end.tv_nsec - ts_start.tv_nsec) / 1000;
+
+    /* Log Output: Dauer und Anzahl der verarbeiteten Clients */
+    debug(LOG_DEBUG, "PERF: Client list update (Lock held) took %ld us (%.3f ms) for %d clients.", 
+          time_diff_us, (double)time_diff_us / 1000.0, processed_clients);
 	return 0;
 }
+
