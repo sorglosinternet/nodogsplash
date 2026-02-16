@@ -460,6 +460,11 @@ _nftables_setup_table(char *nftable_name, char *gw_interface, char *gw_iprange, 
 	}
 
 	/* create rules for CHAIN_TO_INTERNET */
+	/* global download counters for up- and download */
+	rc |= nftables_do_command("add counter ip %s global_upload_counter", nftable_name);
+	rc |= nftables_do_command("add counter ip %s global_download_counter", nftable_name);
+	rc |= nftables_do_command("insert rule ip %s " CHAIN_TO_INTERNET " iifname %s counter name global_upload_counter", nftable_name, gw_interface);
+	rc |= nftables_do_command("insert rule ip %s " CHAIN_OUTGOING " oifname %s counter name global_download_counter", nftable_name, gw_interface);
 	// CHAIN_TO_INTERNET packets marked BLOCKED DROP
 	rc |= nftables_do_command("add rule ip %s " CHAIN_TO_INTERNET " mark and 0x%x == 0x%x counter drop", nftable_name, FW_MARK_MASK, FW_MARK_BLOCKED);
 	// DROP invalid packets
@@ -648,21 +653,57 @@ nftables_fw_deauthenticate(t_client *client)
 	return rc;
 }
 
-/** Return the total upload usage in bytes */
-unsigned long long int
-nftables_fw_total_upload()
+static uint64_t
+_nft_get_named_counter(const char *counter_name)
 {
-	debug(LOG_WARNING, "nftables_fw_total_upload not implemented");
-	return 0;
+    s_config *config;
+    char *nftable_name = NULL;
+    const char *output = NULL;
+    uint64_t bytes = 0;
+    int rc;
+
+    LOCK_CONFIG();
+    config = config_get_config();
+    nftable_name = safe_strdup(config->nftable_name);
+    UNLOCK_CONFIG();
+
+    /* Frage nur diesen einen Counter ab - das ist sehr schnell */
+    rc = nftables_do_json_command(&output, "list counter ip %s %s", nftable_name, counter_name);
+
+    if (rc == 0 && output) {
+        json_error_t error;
+        json_t *root = json_loads(output, 0, &error);
+        
+        if (root) {
+            /* Parse: root -> nftables -> [0] -> counter -> bytes */
+            json_t *nftables_arr = json_object_get(root, "nftables");
+            if (json_is_array(nftables_arr) && json_array_size(nftables_arr) > 0) {
+                json_t *entry = json_array_get(nftables_arr, 0);
+                json_t *counter_obj = json_object_get(entry, "counter");
+                if (counter_obj) {
+                    json_t *bytes_obj = json_object_get(counter_obj, "bytes");
+                    if (json_is_integer(bytes_obj)) {
+                        bytes = json_integer_value(bytes_obj);
+                    }
+                }
+            }
+            json_decref(root);
+        }
+    }
+
+    free(nftable_name);
+    return bytes;
 }
 
-// TODO: rewrite this for NFTABLES, will not work at the moment
-/** Return the total download usage in bytes */
-unsigned long long int
-nftables_fw_total_download()
-{
-	debug(LOG_WARNING, "nftables_fw_total_download not implemented");
-	return 0;
+/* * Diese Funktionen holen sich jetzt den Live-Wert direkt aus nftables.
+ * Keine statischen Variablen mehr nötig.
+ */
+unsigned long long int nftables_fw_total_upload() { 
+    return _nft_get_named_counter("global_upload_counter"); 
+}
+
+unsigned long long int nftables_fw_total_download() { 
+    return _nft_get_named_counter("global_download_counter"); 
 }
 
 int
