@@ -671,28 +671,32 @@ _nft_get_named_counter(const char *counter_name)
     rc = nftables_do_json_command(&output, "list counter ip %s %s", nftable_name, counter_name);
 
     if (rc == 0 && output) {
-        json_error_t error;
-        json_t *root = json_loads(output, 0, &error);
-        
-        if (root) {
-            /* Parse: root -> nftables -> [0] -> counter -> bytes */
-            json_t *nftables_arr = json_object_get(root, "nftables");
-            if (json_is_array(nftables_arr) && json_array_size(nftables_arr) > 0) {
-                json_t *entry = json_array_get(nftables_arr, 0);
-                json_t *counter_obj = json_object_get(entry, "counter");
-                if (counter_obj) {
-                    json_t *bytes_obj = json_object_get(counter_obj, "bytes");
-                    if (json_is_integer(bytes_obj)) {
-                        bytes = json_integer_value(bytes_obj);
-                    }
-                }
-            }
-            json_decref(root);
-        }
-    }
+		json_error_t error;
+		json_t *root = json_loads(output, 0, &error);
+		
+		if (root) {
+			json_t *nftables_arr = json_object_get(root, "nftables");
+			if (json_is_array(nftables_arr)) {
+				/* KORREKTUR: Wir iterieren durch das Array, da Index 0 oft 'metainfo' ist */
+				size_t index;
+				json_t *entry;
+				json_array_foreach(nftables_arr, index, entry) {
+					json_t *counter_obj = json_object_get(entry, "counter");
+					if (counter_obj) {
+						json_t *bytes_obj = json_object_get(counter_obj, "bytes");
+						if (json_is_integer(bytes_obj)) {
+							bytes = json_integer_value(bytes_obj);
+							break; /* Gefunden! Schleife abbrechen. */
+						}
+					}
+				}
+			}
+			json_decref(root);
+		}
+	}
 
-    free(nftable_name);
-    return bytes;
+	free(nftable_name);
+	return bytes;
 }
 
 /* * Diese Funktionen holen sich jetzt den Live-Wert direkt aus nftables.
@@ -743,7 +747,7 @@ nftables_fw_counters_update(void)
 	}
 
 	json_t *nftables_arr = json_object_get(jroot, "nftables");
-	if (json_is_object(nftables_arr)) {
+	if (json_is_array(nftables_arr)) {
 		size_t index;
 		json_t *entry;
 		t_client *client;
@@ -762,34 +766,37 @@ nftables_fw_counters_update(void)
 						json_t *wrapper_elem;
 						json_array_foreach(elem_arr, index_elem, wrapper_elem)  {
 							json_t *elem_obj = json_object_get(wrapper_elem, "elem");
-								json_t *val_obj = json_object_get(elem_obj, "val");
-								json_t *counter_obj = json_object_get(elem_obj, "counter");
-								uint64_t bytes = 0;
-								const char *ip = NULL;
-								const char *mac = NULL;
-								if (counter_obj) {
-									json_t *b = json_object_get(counter_obj, "bytes");
-									if (json_is_integer(b)) bytes = json_integer_value(b);
-								}
-								if (val_obj) {
-									// in authlist, IP and MAC are in a concatenation
-									if (json_is_object(val_obj)) {
-										json_t *concat_arr = json_object_get(val_obj, "concat");
-										if (json_is_array(concat_arr)) {
-											if (json_array_size(concat_arr) >= 2) {
-												ip = json_string_value(json_array_get(concat_arr, 0));
-												mac = json_string_value(json_array_get(concat_arr, 1));
-												if ((client = client_list_find(mac, ip))) {
-													bytes += client->counters.outgoing_offset;
-													if (bytes > client->counters.outgoing) {
-														client->counters.outgoing = bytes;
-														client->counters.last_updated = time(NULL);
-													}
-												}
+							json_t *val_obj = json_object_get(elem_obj, "val");
+							json_t *counter_obj = json_object_get(elem_obj, "counter");
+							uint64_t bytes = 0;
+							const char *ip = NULL;
+							const char *mac = NULL;
+							if (counter_obj) {
+								json_t *b = json_object_get(counter_obj, "bytes");
+								if (json_is_integer(b)) bytes = json_integer_value(b);
+							}
+							if (val_obj && json_is_object(val_obj)) {
+								// in authlist, IP and MAC are in a concatenation
+								json_t *concat_arr = json_object_get(val_obj, "concat");
+								if (json_is_array(concat_arr) && json_array_size(concat_arr) >= 2) {
+									ip = json_string_value(json_array_get(concat_arr, 0));
+									mac = json_string_value(json_array_get(concat_arr, 1));
+
+									if (ip && mac) {
+										client = client_list_find(mac, ip);
+										if (client) {
+											uint64_t total = bytes + client->counters.outgoing_offset;
+											if (total > client->counters.outgoing) {
+												client->counters.outgoing = total;
+												client->counters.last_updated = time(NULL);
 											}
+											processed_clients++;
+										} else {
+											debug(LOG_DEBUG, "Upload: Client not found for IP %s MAC %s", ip, mac);
 										}
-									}
+									}										
 								}
+							}
 						}
 					} else if (strcmp(sname, "authlist_ip") == 0) {
 						// parse authlist_ip as incoming traffic (download)
@@ -805,15 +812,19 @@ nftables_fw_counters_update(void)
 									json_t *b = json_object_get(counter_obj, "bytes");
 									if (json_is_integer(b)) bytes = json_integer_value(b);
 								}
-								if (val_obj) {
+								if (val_obj && json_is_string(val_obj)) {
 									// in authlist_ip, IP is a string without a concatenation
-									if (json_is_object(val_obj)) {
-										ip = json_string_value(val_obj);
-										if ((client = client_list_find_by_ip(ip))) {
-											bytes += client->counters.incoming_offset;
-											if (bytes > client->counters.incoming) {
-												client->counters.incoming = bytes;
+									ip = json_string_value(val_obj);
+									if (ip) {
+										client = client_list_find_by_ip(ip);
+										if (client) {
+											uint64_t total = bytes + client->counters.incoming_offset;
+											if (total > client->counters.incoming) {
+												client->counters.incoming = total;
+												client->counters.last_updated = time(NULL);
 											}
+										} else {
+											debug(LOG_DEBUG, "Download: Client not found for IP %s", ip);
 										}
 									}
 								}
