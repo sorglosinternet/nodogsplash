@@ -780,119 +780,136 @@ unsigned long long int nftables_fw_total_download() { return total_download_byte
 int
 nftables_fw_counters_update(void)
 {
-	s_config *config;
-	char *nftable_name = NULL;
-	char *json_output = NULL;
-	int rc;
+    s_config *config;
+    char *nftable_name = NULL;
+    char *json_output = NULL;
+    int rc;
 
-	/* Arrays für Upload (authlist) und Download (authlist_ip) */
-	struct nft_counter_entry *up_entries = NULL;
-	struct nft_counter_entry *down_entries = NULL;
-	size_t up_count = 0, down_count = 0;
-	size_t up_cap = 0, down_cap = 0;
+    /* Arrays für Upload (authlist) und Download (authlist_ip) */
+    struct nft_counter_entry *up_entries = NULL;
+    struct nft_counter_entry *down_entries = NULL;
+    size_t up_count = 0, down_count = 0;
+    size_t up_cap = 0, down_cap = 0;
 
-	LOCK_CONFIG();
-	config = config_get_config();
-	nftable_name = safe_strdup(config->nftable_name);
-	UNLOCK_CONFIG();
+    /* Variablen für Performance-Messung */
+    struct timespec ts_start, ts_mid, ts_end;
+    long t_prep_us, t_update_us, t_total_us;
+    int processed_clients = 0;
 
-	/* 1. JSON von nftables holen */
-	rc = nftables_do_json_command(&json_output, "list table ip %s", nftable_name);
-	free(nftable_name);
+    /* --- START MESSUNG (Gesamt) --- */
+    clock_gettime(CLOCK_MONOTONIC, &ts_start);
 
-	if (rc != 0 || !json_output) {
-		if (json_output) free(json_output);
-		return -1;
-	}
+    LOCK_CONFIG();
+    config = config_get_config();
+    nftable_name = safe_strdup(config->nftable_name);
+    UNLOCK_CONFIG();
 
-	/* 2. JSON Parsen */
-	json_error_t error;
-	json_t *root = json_loads(json_output, 0, &error);
-	free(json_output); // Raw String freigeben, wir haben jetzt das Jansson-Objekt
+    /* 1. JSON von nftables holen (I/O lastig) */
+    rc = nftables_do_json_command(&json_output, "list table ip %s", nftable_name);
+    free(nftable_name);
 
-	if (!root) {
-		debug(LOG_ERR, "JSON load error: %s (line %d)", error.text, error.line);
-		return -1;
-	}
+    if (rc != 0 || !json_output) {
+        if (json_output) free(json_output);
+        return -1;
+    }
 
-	json_t *nftables_arr = json_object_get(root, "nftables");
-	if (json_is_array(nftables_arr)) {
-		size_t index;
-		json_t *entry;
+    /* 2. JSON Parsen (CPU lastig) */
+    json_error_t error;
+    json_t *root = json_loads(json_output, 0, &error);
+    free(json_output); 
 
-		json_array_foreach(nftables_arr, index, entry) {
-			json_t *set = json_object_get(entry, "set");
-			if (!set) continue;
+    if (!root) {
+        debug(LOG_ERR, "JSON load error: %s (line %d)", error.text, error.line);
+        return -1;
+    }
 
-			const char *name = json_string_value(json_object_get(set, "name"));
-			if (!name) continue;
+    json_t *nftables_arr = json_object_get(root, "nftables");
+    if (json_is_array(nftables_arr)) {
+        size_t index;
+        json_t *entry;
 
-			if (strcmp(name, "authlist") == 0) {
-				up_count = _parse_nft_set(set, &up_entries, &up_cap);
-			} else if (strcmp(name, "authlist_ip") == 0) {
-				down_count = _parse_nft_set(set, &down_entries, &down_cap);
-			}
-		}
-	}
+        json_array_foreach(nftables_arr, index, entry) {
+            json_t *set = json_object_get(entry, "set");
+            if (!set) continue;
 
-	/* 3. Sortieren für bsearch */
-	if (up_count > 0)
-		qsort(up_entries, up_count, sizeof(struct nft_counter_entry), _nft_entry_cmp);
-	if (down_count > 0)
-		qsort(down_entries, down_count, sizeof(struct nft_counter_entry), _nft_entry_cmp);
+            const char *name = json_string_value(json_object_get(set, "name"));
+            if (!name) continue;
 
-	/* 4. Client-Liste aktualisieren */
-	LOCK_CLIENT_LIST();
-	t_client *client = client_get_first_client();
-	
-	struct nft_counter_entry search_key;
-	struct nft_counter_entry *result;
+            if (strcmp(name, "authlist") == 0) {
+                up_count = _parse_nft_set(set, &up_entries, &up_cap);
+            } else if (strcmp(name, "authlist_ip") == 0) {
+                down_count = _parse_nft_set(set, &down_entries, &down_cap);
+            }
+        }
+    }
 
-	while (client != NULL) {
-		search_key.ip = client->ip; // Pointer reicht für Suche
+    /* 3. Sortieren (CPU lastig) */
+    if (up_count > 0)
+        qsort(up_entries, up_count, sizeof(struct nft_counter_entry), _nft_entry_cmp);
+    if (down_count > 0)
+        qsort(down_entries, down_count, sizeof(struct nft_counter_entry), _nft_entry_cmp);
 
-		/* --- UPLOAD (Outgoing) --- */
-		if (up_count > 0) {
-			result = bsearch(&search_key, up_entries, up_count, sizeof(struct nft_counter_entry), _nft_entry_cmp);
-			
-			if (result && result->mac && strcasecmp(client->mac, result->mac) == 0) {
-				/* Offset Logik analog zu fw_iptables.c */
-				uint64_t current_total = result->bytes + client->counters.outgoing_offset;
+    /* --- ENDE PREP / START UPDATE --- */
+    clock_gettime(CLOCK_MONOTONIC, &ts_mid);
 
-				if (current_total > client->counters.outgoing) {
-					total_upload_bytes += (current_total - client->counters.outgoing);
-					client->counters.outgoing = current_total;
-					client->counters.last_updated = time(NULL);
-				}
-			}
-		}
+    /* 4. Client-Liste aktualisieren (Lock-Phase) */
+    LOCK_CLIENT_LIST();
+    t_client *client = client_get_first_client();
+    
+    struct nft_counter_entry search_key;
+    struct nft_counter_entry *result;
 
-		/* --- DOWNLOAD (Incoming) --- */
-		if (down_count > 0) {
-			result = bsearch(&search_key, down_entries, down_count, sizeof(struct nft_counter_entry), _nft_entry_cmp);
-			if (result) {
-				/* Offset Logik analog zu fw_iptables.c */
-				uint64_t current_total = result->bytes + client->counters.incoming_offset;
+    while (client != NULL) {
+        processed_clients++;
+        search_key.ip = client->ip; 
 
-				if (current_total > client->counters.incoming) {
-					total_download_bytes += (current_total - client->counters.incoming);
-					client->counters.incoming = current_total;
-					client->counters.last_updated = time(NULL); // Update timestamp auch bei Download
-				}
-			}
-		}
+        /* --- UPLOAD --- */
+        if (up_count > 0) {
+            result = bsearch(&search_key, up_entries, up_count, sizeof(struct nft_counter_entry), _nft_entry_cmp);
+            
+            if (result && result->mac && strcasecmp(client->mac, result->mac) == 0) {
+                uint64_t current_total = result->bytes + client->counters.outgoing_offset;
+                if (current_total > client->counters.outgoing) {
+                    total_upload_bytes += (current_total - client->counters.outgoing);
+                    client->counters.outgoing = current_total;
+                    client->counters.last_updated = time(NULL);
+                }
+            }
+        }
 
-		client = client->next;
-	}
-	UNLOCK_CLIENT_LIST();
+        /* --- DOWNLOAD --- */
+        if (down_count > 0) {
+            result = bsearch(&search_key, down_entries, down_count, sizeof(struct nft_counter_entry), _nft_entry_cmp);
+            if (result) {
+                uint64_t current_total = result->bytes + client->counters.incoming_offset;
+                if (current_total > client->counters.incoming) {
+                    total_download_bytes += (current_total - client->counters.incoming);
+                    client->counters.incoming = current_total;
+                    client->counters.last_updated = time(NULL); 
+                }
+            }
+        }
 
-	/* 5. Cleanup */
-	// Jansson root freigeben -> Damit werden alle Strings (ip, mac) ungültig!
-	json_decref(root); 
+        client = client->next;
+    }
+    UNLOCK_CLIENT_LIST();
 
-	// Hilfsarrays freigeben (Nur die Container, Inhalt war ja "geliehen")
-	free(up_entries);
-	free(down_entries);
+    /* --- ENDE MESSUNG --- */
+    clock_gettime(CLOCK_MONOTONIC, &ts_end);
 
-	return 0;
+    /* Berechnungen in Mikrosekunden */
+    t_prep_us = (ts_mid.tv_sec - ts_start.tv_sec) * 1000000 + (ts_mid.tv_nsec - ts_start.tv_nsec) / 1000;
+    t_update_us = (ts_end.tv_sec - ts_mid.tv_sec) * 1000000 + (ts_end.tv_nsec - ts_mid.tv_nsec) / 1000;
+    t_total_us = t_prep_us + t_update_us;
+
+    /* Log Output */
+    debug(LOG_ERR, "PERF: Clients: %d | Prep: %ldus | Update (Locked): %ldus | Total: %ldus (%.3f ms)", 
+          processed_clients, t_prep_us, t_update_us, t_total_us, (double)t_total_us / 1000.0);
+
+    /* 5. Cleanup */
+    json_decref(root); 
+    free(up_entries);
+    free(down_entries);
+
+    return 0;
 }
