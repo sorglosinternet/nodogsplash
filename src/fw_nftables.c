@@ -58,7 +58,20 @@ extern pthread_mutex_t config_mutex;
  */
 static int fw_quiet = 0;
 
-int _nftables_setup_table(char *nftable_name, char *gw_interface, char *gw_iprange, char *gw_address, int gw_port, int macmechanism);
+int _nftables_setup_table(const char *nftable_name, char *gw_interface, char *gw_iprange, char *gw_address, int gw_port, int macmechanism);
+
+static char *cached_nftable_name = NULL;
+
+static const char *
+_get_nftable_name()
+{
+    // Kein Lock hier! Nur Rückgabe des existierenden Wertes.
+    if (!cached_nftable_name) {
+        debug(LOG_ERR, "NFT Error: cached_nftable_name not initialized!");
+        return "nodogsplash"; // Sicherer Fallback-String statt NULL
+    }
+    return cached_nftable_name;
+}
 
 // void
 // nftables_initialize_nft_context() {
@@ -248,18 +261,10 @@ int
 _nftables_put_mac_on_list(const char list[], const char mac[])
 {
 	int rc = 0;
-	s_config *config;
-	char *nftable_name = NULL;
-
-	LOCK_CONFIG();
-	config = config_get_config();
-	nftable_name = safe_strdup(config->nftable_name); /* must free */
-	UNLOCK_CONFIG();
 
 	// put mac on list
-	rc = nftables_do_command("add element ip %s %s { %s }", nftable_name, list, mac);
+	rc = nftables_do_command("add element ip %s %s { %s }", _get_nftable_name(), list, mac);
 
-	free(nftable_name);
 	return rc;
 }
 
@@ -267,18 +272,10 @@ int
 _nftables_remove_mac_from_list(const char list[], const char mac[])
 {
 	int rc = 0;
-	s_config *config;
-	char *nftable_name = NULL;
-
-	LOCK_CONFIG();
-	config = config_get_config();
-	nftable_name = safe_strdup(config->nftable_name); /* must free */
-	UNLOCK_CONFIG();
 
 	// put mac on list
-	rc = nftables_do_command("delete element ip %s %s { %s }", nftable_name, list, mac);
+	rc = nftables_do_command("delete element ip %s %s { %s }", _get_nftable_name(), list, mac);
 
-	free(nftable_name);
 	return rc;
 }
 
@@ -356,14 +353,15 @@ nftables_fw_init(void)
 	FW_MARK_BLOCKED = config->fw_mark_blocked;
 	FW_MARK_TRUSTED = config->fw_mark_trusted;
 	FW_MARK_AUTHENTICATED = config->fw_mark_authenticated;
-	nftable_name = safe_strdup(config->nftable_name); /* must free */
+	if (cached_nftable_name) free(cached_nftable_name);
+    cached_nftable_name = safe_strdup(config->nftable_name);
 	UNLOCK_CONFIG();
 
 	/* Set up packet marking */
 	rc |= fw_common_init_marks();
 
 	/* create table, chains and standard rules */
-	rc |= _nftables_setup_table(nftable_name, gw_interface, gw_iprange, gw_address, gw_port, macmechanism);
+	rc |= _nftables_setup_table(_get_nftable_name(), gw_interface, gw_iprange, gw_address, gw_port, macmechanism);
 
 	/* put trusted macs in trustlist */
 	for (; pt != NULL; pt = pt->next) {
@@ -395,7 +393,6 @@ nftables_fw_init(void)
 	free(gw_interface);
 	free(gw_iprange);
 	free(gw_address);
-	free(nftable_name);
 
 	return rc;
 }
@@ -405,7 +402,7 @@ nftables_fw_init(void)
  * create standard table, chains and rules
  */
 int
-_nftables_setup_table(char *nftable_name, char *gw_interface, char *gw_iprange, char *gw_address, int gw_port, int macmechanism)
+_nftables_setup_table(const char *nftable_name, char *gw_interface, char *gw_iprange, char *gw_address, int gw_port, int macmechanism)
 {
 	int rc = 0;
 
@@ -596,24 +593,17 @@ int
 nftables_fw_destroy(void)
 {
 	fw_quiet = 1;
-	s_config *config;
-	char *nftable_name = NULL;
 
+	debug(LOG_DEBUG, "Deleting our nftables entries");
 
-	LOCK_CONFIG();
-	config = config_get_config();
-	nftable_name = safe_strdup(config->nftable_name);
-	UNLOCK_CONFIG();
+	nftables_do_command("delete table ip %s", _get_nftable_name());
 
-	debug(LOG_DEBUG, "Destroying our nftables entries");
-
-	// just delete the whole table
-	nftables_do_command("delete table ip %s", nftable_name);
+	if (cached_nftable_name) {
+		free(cached_nftable_name);
+		cached_nftable_name = NULL;
+	}
 
 	fw_quiet = 0;
-
-	free(nftable_name);
-
 	return 0;
 }
 
@@ -625,7 +615,6 @@ nftables_fw_authenticate(t_client *client)
 	int rc = 0, download_limit, upload_limit, traffic_control;
 	s_config *config;
 	char upload_ifbname[16];
-	char *nftable_name = NULL;
 	
 	LOCK_CONFIG();
 	config = config_get_config();
@@ -633,7 +622,6 @@ nftables_fw_authenticate(t_client *client)
 	traffic_control = config->traffic_control;
 	download_limit = config->download_limit;
 	upload_limit = config->upload_limit;
-	nftable_name = safe_strdup(config->nftable_name);
 	UNLOCK_CONFIG();
 
 	if ((client->download_limit > 0) && (client->upload_limit > 0)) {
@@ -644,12 +632,11 @@ nftables_fw_authenticate(t_client *client)
 	debug(LOG_NOTICE, "Authenticating %s %s", client->ip, client->mac);
 
 	// write client IP + MAC in the nftables authlist set:
-	nftables_do_command("add element ip %s authlist { %s . %s }", nftable_name, client->ip, client->mac);
+	nftables_do_command("add element ip %s authlist { %s . %s }", _get_nftable_name(), client->ip, client->mac);
 	// TODO: find way to get rid of authlist_ip
 	// write client IP in the nftables authlist_ip set:
-	nftables_do_command("add element ip %s authlist_ip { %s }", nftable_name, client->ip);
+	nftables_do_command("add element ip %s authlist_ip { %s }", _get_nftable_name(), client->ip);
 
-	free(nftable_name);
 	return rc;
 }
 
@@ -659,7 +646,6 @@ nftables_fw_deauthenticate(t_client *client)
 	int rc = 0, download_limit, upload_limit, traffic_control;
 	s_config *config;
 	char upload_ifbname[16];
-	char *nftable_name = NULL;
 
 	LOCK_CONFIG();
 	config = config_get_config();
@@ -667,7 +653,6 @@ nftables_fw_deauthenticate(t_client *client)
 	traffic_control = config->traffic_control;
 	download_limit = config->download_limit;
 	upload_limit = config->upload_limit;
-	nftable_name = safe_strdup(config->nftable_name);
 	UNLOCK_CONFIG();
 
 	if ((client->download_limit > 0) && (client->upload_limit > 0)) {
@@ -676,29 +661,21 @@ nftables_fw_deauthenticate(t_client *client)
 	}
 
 	/* Remove client from authlist and authlist_ip */
-	nftables_do_command("delete element ip %s authlist { %s . %s }", nftable_name, client->ip, client->mac);
-	nftables_do_command("delete element ip %s authlist_ip { %s }", nftable_name, client->ip);
+	nftables_do_command("delete element ip %s authlist { %s . %s }", _get_nftable_name(), client->ip, client->mac);
+	nftables_do_command("delete element ip %s authlist_ip { %s }", _get_nftable_name(), client->ip);
 
-	free(nftable_name);
 	return rc;
 }
 
 static uint64_t
 _nft_get_named_counter(const char *counter_name)
 {
-    s_config *config;
-    char *nftable_name = NULL;
     char *output = NULL;
     uint64_t bytes = 0;
     int rc;
 
-    LOCK_CONFIG();
-    config = config_get_config();
-    nftable_name = safe_strdup(config->nftable_name);
-    UNLOCK_CONFIG();
-
     /* Frage nur diesen einen Counter ab - das ist sehr schnell */
-    rc = nftables_do_json_command(&output, "list counter ip %s %s", nftable_name, counter_name);
+    rc = nftables_do_json_command(&output, "list counter ip %s %s", _get_nftable_name(), counter_name);
 
     if (rc == 0 && output) {
 		json_error_t error;
@@ -725,8 +702,7 @@ _nft_get_named_counter(const char *counter_name)
 		}
 	}
 
-	free(output);
-	free(nftable_name);
+	if (output) free(output);
 	return bytes;
 }
 
@@ -744,8 +720,6 @@ unsigned long long int nftables_fw_total_download() {
 int
 nftables_fw_counters_update(void)
 {
-	s_config *config;
-	char *nftable_name = NULL;
 	char *output = NULL;
 	int rc;
 	json_error_t jerror;
@@ -759,16 +733,10 @@ nftables_fw_counters_update(void)
 	/* --- Start Performance Messung des kritischen Abschnitts --- */
     clock_gettime(CLOCK_MONOTONIC, &ts_start);
 
-	LOCK_CONFIG();
-	config = config_get_config();
-	nftable_name = safe_strdup(config->nftable_name);
-	UNLOCK_CONFIG();
-
-	rc = nftables_do_json_command(&output, "list table ip %s", nftable_name);
+	rc = nftables_do_json_command(&output, "list table ip %s", _get_nftable_name());
 
 	if (rc != 0) {
 		free(output);
-		free(nftable_name);
 		return -1;
 	}
 
@@ -780,8 +748,7 @@ nftables_fw_counters_update(void)
 	if (!jroot) {
 		debug(LOG_ERR, "JSON load error: %s (line %d)", jerror.text, jerror.line);
 		// Hinweis: output kann hier schon ungültig sein, also Vorsicht mit printf(output)
-		// printf("JSON Buffer: %s", output);
-		free(nftable_name);
+		// printf("JSON Buffer: %s", output);		
 		return -1;
 	}
 
@@ -886,7 +853,6 @@ nftables_fw_counters_update(void)
           time_diff_us, (double)time_diff_us / 1000.0, processed_clients);
 
 	json_decref(jroot);
-	free(nftable_name);
 	return 0;
 }
 
