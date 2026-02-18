@@ -53,8 +53,6 @@
 extern pthread_mutex_t client_list_mutex;
 extern pthread_mutex_t config_mutex;
 
-struct nft_ctx *nft;
-
 /**
  * Make nonzero to supress the error output of the firewall during destruction.
  */
@@ -62,60 +60,92 @@ static int fw_quiet = 0;
 
 int _nftables_setup_table(char *nftable_name, char *gw_interface, char *gw_iprange, char *gw_address, int gw_port, int macmechanism);
 
-void
-nftables_initialize_nft_context() {
-	nft = nft_ctx_new(NFT_CTX_DEFAULT);
-}
+// void
+// nftables_initialize_nft_context() {
+// 	nft = nft_ctx_new(NFT_CTX_DEFAULT);
+// }
 
 /** @internal */
 int
 nftables_do_command(const char *format, ...)
 {
-	va_list vlist;
-	char *fmt_cmd = NULL;
-	int rc;
+    struct nft_ctx *ctx; // <--- NEU: Lokaler Kontext
+    va_list vlist;
+    char *fmt_cmd = NULL;
+    int rc;
 
-	va_start(vlist, format);
-	safe_vasprintf(&fmt_cmd, format, vlist);
-	va_end(vlist);
+    va_start(vlist, format);
+    safe_vasprintf(&fmt_cmd, format, vlist);
+    va_end(vlist);
 
-	nft_ctx_output_set_flags(nft, 0);
-	rc = nft_run_cmd_from_buffer(nft, fmt_cmd);
-	if (rc != 0) {
-		debug(LOG_INFO, "return value from NFT call was %i with command: %s", rc, fmt_cmd);
-	}
+    // 1. Kontext erstellen (statt global 'nft')
+    ctx = nft_ctx_new(NFT_CTX_DEFAULT);
+    if (!ctx) {
+        free(fmt_cmd);
+        return -1;
+    }
 
-	free(fmt_cmd);
+    // 2. Befehl ausführen
+    nft_ctx_output_set_flags(ctx, 0);
+    rc = nft_run_cmd_from_buffer(ctx, fmt_cmd);
+    
+    if (rc != 0) {
+        debug(LOG_INFO, "NFT Error %i: %s", rc, fmt_cmd);
+    }
 
-	return rc;
+    // 3. Aufräumen (WICHTIG!)
+    nft_ctx_free(ctx);
+    free(fmt_cmd);
+
+    return rc;
 }
 
-/** @internal - Executes command and returns JSON output string */
+/** @internal - Executes command and returns JSON output string (caller must free *output) */
 int
-nftables_do_json_command(const char **output, const char *format, ...)
+nftables_do_json_command(char **output, const char *format, ...)
 {
-	va_list vlist;
-	char *fmt_cmd = NULL;
-	int rc;
+    struct nft_ctx *ctx; // <--- NEU: Lokaler Kontext
+    va_list vlist;
+    char *fmt_cmd = NULL;
+    int rc;
+    const char *raw_buf;
 
-	va_start(vlist, format);
-	safe_vasprintf(&fmt_cmd, format, vlist);
-	va_end(vlist);
+    va_start(vlist, format);
+    safe_vasprintf(&fmt_cmd, format, vlist);
+    va_end(vlist);
 
-	nft_ctx_unbuffer_output(nft);
-	nft_ctx_output_set_flags(nft, NFT_CTX_OUTPUT_JSON);
-	nft_ctx_buffer_output(nft);
+    // 1. Kontext erstellen
+    ctx = nft_ctx_new(NFT_CTX_DEFAULT);
+    if (!ctx) {
+        free(fmt_cmd);
+        return -1;
+    }
 
-	rc = nft_run_cmd_from_buffer(nft, fmt_cmd);
+    // 2. Buffer aktivieren
+    nft_ctx_unbuffer_output(ctx); // Zur Sicherheit
+    nft_ctx_output_set_flags(ctx, NFT_CTX_OUTPUT_JSON);
+    nft_ctx_buffer_output(ctx);
 
-	if (rc != 0) {
-		debug(LOG_INFO, "return value from NFT call was %i with command: %s", rc, fmt_cmd);
-	}
+    // 3. Ausführen
+    rc = nft_run_cmd_from_buffer(ctx, fmt_cmd);
 
-	*output = nft_ctx_get_output_buffer(nft);
+    if (rc != 0) {
+        debug(LOG_INFO, "NFT Error %i: %s", rc, fmt_cmd);
+    }
 
-	free(fmt_cmd);
-	return rc;
+    // 4. Output kopieren (strdup ist Pflicht, da ctx gleich stirbt!)
+    raw_buf = nft_ctx_get_output_buffer(ctx);
+    if (raw_buf) {
+        *output = safe_strdup(raw_buf); // Nutze dein safe_strdup
+    } else {
+        *output = NULL;
+    }
+
+    // 5. Aufräumen
+    nft_ctx_free(ctx);
+    free(fmt_cmd);
+    
+    return rc;
 }
 
 /**
@@ -179,7 +209,7 @@ _nftables_compile(const char table[], const char chain[], t_firewall_rule *rule)
 				 "dport %s ", rule->port);
 	}
 	if (rule->ipset != NULL) {
-		return "ipset not implemented";
+		return safe_strdup("ipset not implemented");
 	}
 	snprintf((command + strlen(command)),
 			 (sizeof(command) - strlen(command)),
@@ -380,7 +410,7 @@ _nftables_setup_table(char *nftable_name, char *gw_interface, char *gw_iprange, 
 	int rc = 0;
 
 	/* create (single) nodogsplash table */
-	nftables_do_command("destroy table ip %s", nftable_name);
+	nftables_do_command("delete table ip %s", nftable_name);
 	nftables_do_command("add table ip %s", nftable_name);
 
 	/* TODO:
@@ -577,8 +607,8 @@ nftables_fw_destroy(void)
 
 	debug(LOG_DEBUG, "Destroying our nftables entries");
 
-	// just destroy the whole table
-	nftables_do_command("destroy table ip %s", nftable_name);
+	// just delete the whole table
+	nftables_do_command("delete table ip %s", nftable_name);
 
 	fw_quiet = 0;
 
@@ -658,7 +688,7 @@ _nft_get_named_counter(const char *counter_name)
 {
     s_config *config;
     char *nftable_name = NULL;
-    const char *output = NULL;
+    char *output = NULL;
     uint64_t bytes = 0;
     int rc;
 
@@ -695,6 +725,7 @@ _nft_get_named_counter(const char *counter_name)
 		}
 	}
 
+	free(output);
 	free(nftable_name);
 	return bytes;
 }
@@ -715,7 +746,7 @@ nftables_fw_counters_update(void)
 {
 	s_config *config;
 	char *nftable_name = NULL;
-	const char *output = NULL;
+	char *output = NULL;
 	int rc;
 	json_error_t jerror;
 	json_t *jroot;
@@ -736,13 +767,21 @@ nftables_fw_counters_update(void)
 	rc = nftables_do_json_command(&output, "list table ip %s", nftable_name);
 
 	if (rc != 0) {
+		free(output);
+		free(nftable_name);
 		return -1;
 	}
 
 	jroot = json_loads(output, 0, &jerror);
+
+	free(output);
+	output = NULL;
+
 	if (!jroot) {
 		debug(LOG_ERR, "JSON load error: %s (line %d)", jerror.text, jerror.line);
-		printf("JSON Buffer: %s", output);
+		// Hinweis: output kann hier schon ungültig sein, also Vorsicht mit printf(output)
+		// printf("JSON Buffer: %s", output);
+		free(nftable_name);
 		return -1;
 	}
 
@@ -845,6 +884,9 @@ nftables_fw_counters_update(void)
     /* Log Output: Dauer und Anzahl der verarbeiteten Clients */
     debug(LOG_DEBUG, "PERF: Client list update (Lock held) took %ld us (%.3f ms) for %d clients.", 
           time_diff_us, (double)time_diff_us / 1000.0, processed_clients);
+
+	json_decref(jroot);
+	free(nftable_name);
 	return 0;
 }
 
