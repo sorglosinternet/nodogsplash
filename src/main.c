@@ -335,17 +335,46 @@ main_loop(void)
 		termination_handler(1);
 	}
 
+	unsigned int thread_pool_size = 64;
+	unsigned int max_connections = 800;
+	size_t stack_size = 256 * 1024;
+
+	unsigned int flags = MHD_USE_EPOLL_INTERNALLY_LINUX_ONLY | 
+						 MHD_USE_TCP_FASTOPEN | 
+						 MHD_USE_TURBO | 
+						 MHD_USE_DEBUG;
+
+	debug(LOG_NOTICE, "Optimized: Starting webserver with %u threads, Stack=%lukB, MaxConn=%u", 
+		  thread_pool_size, stack_size/1024, max_connections);
+
 	/* Initializes the web server */
 	if ((webserver = MHD_start_daemon(
-		 MHD_USE_EPOLL_INTERNALLY | MHD_USE_TCP_FASTOPEN,
-		 config->gw_port,
-		 NULL, NULL,
-		 libmicrohttpd_cb, NULL,
-		 MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int) 120,
-		 MHD_OPTION_LISTENING_ADDRESS_REUSE, 1,
-		 MHD_OPTION_END)) == NULL) {
-		debug(LOG_ERR, "Could not create web server: %s", strerror(errno));
-		exit(1);
+		 flags, config->gw_port, NULL, NULL, libmicrohttpd_cb, NULL,
+		 MHD_OPTION_CONNECTION_LIMIT, max_connections,
+		 MHD_OPTION_LISTEN_BACKLOG_SIZE, (unsigned int)2048,
+		 MHD_OPTION_THREAD_POOL_SIZE, thread_pool_size, 
+		 MHD_OPTION_THREAD_STACK_SIZE, (size_t)stack_size,
+		 
+		 /* AGGRESSIVER TIMEOUT: Killt hängende Scapy-Sockets nach 5 Sekunden! */
+		 MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int)5, 
+		 
+		 MHD_OPTION_LISTENING_ADDRESS_REUSE, 1, MHD_OPTION_END)) == NULL) {
+		
+		/* Fallback */
+		debug(LOG_WARNING, "Epoll failed. Fallback to Poll.");
+		flags = MHD_USE_POLL_INTERNALLY | MHD_USE_DEBUG;
+		webserver = MHD_start_daemon(
+			 flags, config->gw_port, NULL, NULL, libmicrohttpd_cb, NULL,
+			 MHD_OPTION_CONNECTION_LIMIT, max_connections,
+			 MHD_OPTION_THREAD_POOL_SIZE, thread_pool_size,
+			 MHD_OPTION_THREAD_STACK_SIZE, (size_t)stack_size,
+			 MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int)5, /* Auch hier 5 Sekunden */
+			 MHD_OPTION_LISTENING_ADDRESS_REUSE, 1, MHD_OPTION_END);
+			 
+		if (webserver == NULL) {
+			debug(LOG_ERR, "Could not create web server: %s", strerror(errno));
+			exit(1);
+		}
 	}
 
 	/* TODO: set listening socket */
