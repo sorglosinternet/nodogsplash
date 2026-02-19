@@ -723,136 +723,125 @@ nftables_fw_counters_update(void)
 	char *output = NULL;
 	int rc;
 	json_error_t jerror;
-	json_t *jroot;
+	json_t *jroot, *nft_arr, *entry, *set_obj, *elem_arr;
+	size_t i, j;
+	t_client *client;
 
-	/* Variablen für Performance-Messung */
-    struct timespec ts_start, ts_end;
-    long time_diff_us;
-    int processed_clients = 0;
+	/* Performance Messung */
+	struct timespec ts_start, ts_end;
+	long time_diff_us;
+	int processed_clients = 0;
 
-	/* --- Start Performance Messung des kritischen Abschnitts --- */
-    clock_gettime(CLOCK_MONOTONIC, &ts_start);
+	clock_gettime(CLOCK_MONOTONIC, &ts_start);
 
-	rc = nftables_do_json_command(&output, "list table ip %s", _get_nftable_name());
+	const char *tname = _get_nftable_name();
 
-	if (rc != 0) {
+	// --- TEIL 1: UPLOAD (authlist) ---
+	rc = nftables_do_json_command(&output, "list set ip %s authlist", tname);
+	if (rc == 0 && output) {
+		jroot = json_loads(output, 0, &jerror);
 		free(output);
-		return -1;
-	}
+		output = NULL;
 
-	jroot = json_loads(output, 0, &jerror);
+		if (jroot) {
+			nft_arr = json_object_get(jroot, "nftables");
+			if (json_is_array(nft_arr)) {
+				LOCK_CLIENT_LIST();
+				json_array_foreach(nft_arr, i, entry) {
+					set_obj = json_object_get(entry, "set");
+					if (!set_obj) continue;
 
-	free(output);
-	output = NULL;
-
-	if (!jroot) {
-		debug(LOG_ERR, "JSON load error: %s (line %d)", jerror.text, jerror.line);
-		// Hinweis: output kann hier schon ungültig sein, also Vorsicht mit printf(output)
-		// printf("JSON Buffer: %s", output);		
-		return -1;
-	}
-
-	json_t *nftables_arr = json_object_get(jroot, "nftables");
-	if (json_is_array(nftables_arr)) {
-		size_t index;
-		json_t *entry;
-		t_client *client;
-
-		LOCK_CLIENT_LIST();
-		debug(LOG_DEBUG, "nftables_fw_counters_update");
-		json_array_foreach(nftables_arr, index, entry) {
-			json_t *set_wrapper = json_object_get(entry, "set");
-			if (set_wrapper) {
-				const char *sname = json_string_value(json_object_get(set_wrapper, "name"));
-				json_t *elem_arr = json_object_get(set_wrapper, "elem");
-				if (sname && elem_arr && json_is_array(elem_arr)) {
-					if (strcmp(sname, "authlist") == 0) {
-						// parse authlist as outgoing traffic (upload)
-						size_t index_elem = 0;
-						json_t *wrapper_elem;
-						json_array_foreach(elem_arr, index_elem, wrapper_elem)  {
-							json_t *elem_obj = json_object_get(wrapper_elem, "elem");
+					elem_arr = json_object_get(set_obj, "elem");
+					if (json_is_array(elem_arr)) {
+						size_t k;
+						json_t *wrapper;
+						json_array_foreach(elem_arr, k, wrapper) {
+							json_t *elem_obj = json_object_get(wrapper, "elem");
 							json_t *val_obj = json_object_get(elem_obj, "val");
 							json_t *counter_obj = json_object_get(elem_obj, "counter");
-							uint64_t bytes = 0;
-							const char *ip = NULL;
-							const char *mac = NULL;
-							if (counter_obj) {
-								json_t *b = json_object_get(counter_obj, "bytes");
-								if (json_is_integer(b)) bytes = json_integer_value(b);
-							}
-							if (val_obj && json_is_object(val_obj)) {
-								// in authlist, IP and MAC are in a concatenation
-								json_t *concat_arr = json_object_get(val_obj, "concat");
-								if (json_is_array(concat_arr) && json_array_size(concat_arr) >= 2) {
-									ip = json_string_value(json_array_get(concat_arr, 0));
-									mac = json_string_value(json_array_get(concat_arr, 1));
+							
+							if (val_obj && counter_obj) {
+								json_t *concat = json_object_get(val_obj, "concat");
+								if (json_is_array(concat) && json_array_size(concat) >= 2) {
+									const char *ip = json_string_value(json_array_get(concat, 0));
+									const char *mac = json_string_value(json_array_get(concat, 1));
+									uint64_t bytes = json_integer_value(json_object_get(counter_obj, "bytes"));
 
 									if (ip && mac) {
 										client = client_list_find(mac, ip);
 										if (client) {
+											processed_clients++;
 											uint64_t total = bytes + client->counters.outgoing_offset;
 											if (total > client->counters.outgoing) {
 												client->counters.outgoing = total;
 												client->counters.last_updated = time(NULL);
 											}
-											processed_clients++;
-										} else {
-											debug(LOG_DEBUG, "Upload: Client not found for IP %s MAC %s", ip, mac);
-										}
-									}										
-								}
-							}
-						}
-					} else if (strcmp(sname, "authlist_ip") == 0) {
-						// parse authlist_ip as incoming traffic (download)
-						size_t index_elem = 0;
-						json_t *wrapper_elem;
-						json_array_foreach(elem_arr, index_elem, wrapper_elem)  {
-							json_t *elem_obj = json_object_get(wrapper_elem, "elem");
-								json_t *val_obj = json_object_get(elem_obj, "val");
-								json_t *counter_obj = json_object_get(elem_obj, "counter");
-								uint64_t bytes = 0;
-								const char *ip = NULL;
-								if (counter_obj) {
-									json_t *b = json_object_get(counter_obj, "bytes");
-									if (json_is_integer(b)) bytes = json_integer_value(b);
-								}
-								if (val_obj && json_is_string(val_obj)) {
-									// in authlist_ip, IP is a string without a concatenation
-									ip = json_string_value(val_obj);
-									if (ip) {
-										client = client_list_find_by_ip(ip);
-										if (client) {
-											uint64_t total = bytes + client->counters.incoming_offset;
-											if (total > client->counters.incoming) {
-												client->counters.incoming = total;
-												client->counters.last_updated = time(NULL);
-											}
-										} else {
-											debug(LOG_DEBUG, "Download: Client not found for IP %s", ip);
 										}
 									}
 								}
 							}
+						}
 					}
 				}
+				UNLOCK_CLIENT_LIST();
 			}
+			json_decref(jroot);
 		}
-		UNLOCK_CLIENT_LIST();
 	}
-	    /* --- Ende Performance Messung --- */
-    clock_gettime(CLOCK_MONOTONIC, &ts_end);
 
-    /* Berechnung der Dauer in Mikrosekunden */
-    time_diff_us = (ts_end.tv_sec - ts_start.tv_sec) * 1000000 + 
-                   (ts_end.tv_nsec - ts_start.tv_nsec) / 1000;
+	// --- TEIL 2: DOWNLOAD (authlist_ip) ---
+	rc = nftables_do_json_command(&output, "list set ip %s authlist_ip", tname);
+	if (rc == 0 && output) {
+		jroot = json_loads(output, 0, &jerror);
+		free(output);
+		output = NULL;
 
-    /* Log Output: Dauer und Anzahl der verarbeiteten Clients */
-    debug(LOG_DEBUG, "PERF: Client list update (Lock held) took %ld us (%.3f ms) for %d clients.", 
-          time_diff_us, (double)time_diff_us / 1000.0, processed_clients);
+		if (jroot) {
+			nft_arr = json_object_get(jroot, "nftables");
+			if (json_is_array(nft_arr)) {
+				LOCK_CLIENT_LIST();
+				json_array_foreach(nft_arr, i, entry) {
+					set_obj = json_object_get(entry, "set");
+					if (!set_obj) continue;
 
-	json_decref(jroot);
+					elem_arr = json_object_get(set_obj, "elem");
+					if (json_is_array(elem_arr)) {
+						size_t k;
+						json_t *wrapper;
+						json_array_foreach(elem_arr, k, wrapper) {
+							json_t *elem_obj = json_object_get(wrapper, "elem");
+							json_t *val_obj = json_object_get(elem_obj, "val");
+							json_t *counter_obj = json_object_get(elem_obj, "counter");
+
+							if (json_is_string(val_obj) && counter_obj) {
+								const char *ip = json_string_value(val_obj);
+								uint64_t bytes = json_integer_value(json_object_get(counter_obj, "bytes"));
+
+								if (ip) {
+									client = client_list_find_by_ip(ip);
+									if (client) {
+										uint64_t total = bytes + client->counters.incoming_offset;
+										if (total > client->counters.incoming) {
+											client->counters.incoming = total;
+											client->counters.last_updated = time(NULL);
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				UNLOCK_CLIENT_LIST();
+			}
+			json_decref(jroot);
+		}
+	}
+
+	clock_gettime(CLOCK_MONOTONIC, &ts_end);
+	time_diff_us = (ts_end.tv_sec - ts_start.tv_sec) * 1000000 + (ts_end.tv_nsec - ts_start.tv_nsec) / 1000;
+	debug(LOG_DEBUG, "PERF: Client list update (Lock held) took %ld us (%.3f ms) for %d clients.", 
+		  time_diff_us, (double)time_diff_us / 1000.0, processed_clients);
+
 	return 0;
 }
 
