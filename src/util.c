@@ -189,11 +189,13 @@ get_client_mac_proc(char mac[18], const char req_ip[])
 	while (fgets(line, sizeof(line) - 1, f) != NULL) {
 		if (0 == strncmp(line, ip, len + 1)) {
 			if (1 == sscanf(line, "%*s %*s %*s %17[A-Fa-f0-9:] ", mac)) {
+				fclose(f); /* <--- FIX: Datei schließen bei Erfolg */
 				return 0;
 			}
 		}
 	}
 
+	fclose(f); /* <--- FIX: Datei schließen, wenn nichts gefunden wurde */
 	return -1;
 }
 
@@ -224,11 +226,13 @@ get_client_mac_iproute(char mac[18], const char req_ip[])
 	while (fgets(line, sizeof(line) - 1, f) != NULL) {
 		if (0 == strncmp(line, ip, len + 1)) {
 			if (1 == sscanf(line, "%*s %*s %*s %*s %17[A-Fa-f0-9:] ", mac)) {
+				pclose(f); /* <--- FIX: Pipe schließen bei Erfolg */
 				return 0;
 			}
 		}
 	}
-
+	
+	pclose(f); /* <--- FIX: Pipe schließen, wenn nichts gefunden wurde */
 	return -1;
 }
 
