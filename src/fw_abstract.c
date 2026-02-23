@@ -34,6 +34,4 @@ void fw_use_nftables() {
 	fw_gops.deauthenticate = nftables_fw_deauthenticate;
 	fw_gops.total_download = nftables_fw_total_download;
 	fw_gops.counters_update = nftables_fw_counters_update;
-	nftables_initialize_nft_context();
 }
-

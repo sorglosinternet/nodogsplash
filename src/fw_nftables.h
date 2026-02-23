@@ -32,8 +32,6 @@
 #include "client_list.h"
 #include "fw_common.h"
 
-void nftables_initialize_nft_context();
-
 /** @brief Initialize the firewall */
 int nftables_fw_init(void);
 
