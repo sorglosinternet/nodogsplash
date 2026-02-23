@@ -1,8 +1,9 @@
 #include "fw_abstract.h"
+#include "debug.h"
 
 fw_ops fw_gops = {};
 
-void fw_use_iptables() {
+int fw_use_iptables() {
 	fw_gops.init = iptables_fw_init;
 	fw_gops.destroy = iptables_fw_destroy;
 	fw_gops.allow_mac = iptables_allow_mac;
@@ -17,9 +18,11 @@ void fw_use_iptables() {
 	fw_gops.deauthenticate = iptables_fw_deauthenticate;
 	fw_gops.total_download = iptables_fw_total_download;
 	fw_gops.counters_update = iptables_fw_counters_update;
+	return 0;
 }
 
-void fw_use_nftables() {
+#ifdef ENABLE_NFTABLES
+int fw_use_nftables() {
 	fw_gops.init = nftables_fw_init;
 	fw_gops.destroy = nftables_fw_destroy;
 	fw_gops.allow_mac = nftables_allow_mac;
@@ -34,4 +37,12 @@ void fw_use_nftables() {
 	fw_gops.deauthenticate = nftables_fw_deauthenticate;
 	fw_gops.total_download = nftables_fw_total_download;
 	fw_gops.counters_update = nftables_fw_counters_update;
+	return 0;
 }
+#else // not ENABLE_NFTABLES
+int fw_use_nftables() {
+	debug(LOG_ERR, "build without nftables support");
+	return 1;
+}
+#endif // ENABLE_NFTABLES
+

@@ -367,6 +367,7 @@ int main(int argc, char **argv)
 {
 	s_config *config = config_get_config();
 	config_init();
+	int rc = 0;
 
 	parse_commandline(argc, argv);
 
@@ -377,9 +378,14 @@ int main(int argc, char **argv)
 
 	// Initialize IPTables / NFTables
 	if (config->use_nftables) {
-		fw_use_nftables();	
+		 rc = fw_use_nftables();	
 	} else {
-		fw_use_iptables();
+		rc = fw_use_iptables();
+	}
+
+	if (rc) {
+		debug(LOG_ERR, "initializing firewall functions failed, aborting");
+		return 1;
 	}
 
 	// Initializes the linked list of connected clients
