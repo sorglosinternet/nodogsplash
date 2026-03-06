@@ -57,6 +57,13 @@ static t_client *firstclient = NULL;
 
 static void _client_list_free_node(t_client *client);
 
+#ifdef __NDS_UNIT_TEST
+int
+get_client_id() {
+	return client_id;
+}
+#endif /* __NDS_UNIT_TEST */
+
 /** Return current length of the client list
  */
 int
