@@ -7,7 +7,7 @@
 
 #include "fw_iptables.h"
 
-#ifdef ENABLE_NFTABLES
+#ifdef WITH_NFTABLES_SUPPORT
 #include "fw_nftables.h"
 #endif
 

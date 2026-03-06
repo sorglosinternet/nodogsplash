@@ -21,7 +21,7 @@ int fw_use_iptables() {
 	return 0;
 }
 
-#ifdef ENABLE_NFTABLES
+#ifdef WITH_NFTABLES_SUPPORT
 int fw_use_nftables() {
 	fw_gops.init = nftables_fw_init;
 	fw_gops.destroy = nftables_fw_destroy;
@@ -39,10 +39,10 @@ int fw_use_nftables() {
 	fw_gops.counters_update = nftables_fw_counters_update;
 	return 0;
 }
-#else // not ENABLE_NFTABLES
+#else // not WITH_NFTABLES_SUPPORT
 int fw_use_nftables() {
 	debug(LOG_ERR, "build without nftables support");
 	return 1;
 }
-#endif // ENABLE_NFTABLES
+#endif // WITH_NFTABLES_SUPPORT
 
