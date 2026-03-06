@@ -512,6 +512,28 @@ ndsctl_status(FILE *fp)
 		fprintf(fp, "Preauth: Disabled\n");
 	}
 
+	#ifdef WITH_STATE_FILE
+	fprintf(fp, "compiled with state file support");
+	if (config->statefile) {
+		fprintf(fp, "State File Path: %s\n", config->statefile);
+	}
+	#endif /* _STATE_FILE_H_ */
+
+	if (config->client_mode == MODE_MAC_IP) {
+		fprintf(fp, "Client Mode: MAC and IP\n");
+	} else if (config->client_mode == MODE_MAC) {
+		fprintf(fp, "Client Mode: MAC ONLY\n");
+	}
+
+	if (config->use_nftables) {
+		fprintf(fp, "NFTABLES support: enabled\n");
+		if (config->nftable_name) {
+			fprintf(fp, "NFTABLE name: %s\n", config->nftable_name);
+		}
+	} else {
+		fprintf(fp, "NFTABLES support: enabled\n");
+	}
+
 	fprintf(fp, "Client Check Interval: %ds\n", config->checkinterval);
 	format_duration(0, config->preauth_idle_timeout * 60, durationbuf);
 	fprintf(fp, "Preauth Idle Timeout: %sm\n", durationbuf);
