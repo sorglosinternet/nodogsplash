@@ -4,7 +4,7 @@ CFLAGS?=-O2 -g -Wall
 CFLAGS+=-I../../src
 CFLAGS+= -DWITH_STATE_FILE
 
-LDLIBS+=-ljson-c
+LDLIBS+=-ljansson
 
 .PHONY: all tests
 
