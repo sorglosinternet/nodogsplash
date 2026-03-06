@@ -513,7 +513,7 @@ ndsctl_status(FILE *fp)
 	}
 
 	#ifdef WITH_STATE_FILE
-	fprintf(fp, "compiled with state file support");
+	fprintf(fp, "compiled with state file support\n");
 	if (config->statefile) {
 		fprintf(fp, "State File Path: %s\n", config->statefile);
 	}
@@ -531,7 +531,7 @@ ndsctl_status(FILE *fp)
 			fprintf(fp, "NFTABLE name: %s\n", config->nftable_name);
 		}
 	} else {
-		fprintf(fp, "NFTABLES support: enabled\n");
+		fprintf(fp, "NFTABLES support: disabled\n");
 	}
 
 	fprintf(fp, "Client Check Interval: %ds\n", config->checkinterval);
