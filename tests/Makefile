@@ -3,7 +3,7 @@
 .PHONY: all tests
 all: tests
 
-tests: run_test_client_list_mode
+tests: run_test_client_list_mode run_test_utils run_test_conf
 	$(MAKE) -C ./state_file/ tests
 
 # client list mode tests
@@ -22,3 +22,11 @@ TEST_CLIENT_LIST_MODE_OBJECT := \
 
 test_client_list_mode: $(TEST_CLIENT_LIST_MODE_OBJECT)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o test_client_list_mode $+ $(LDLIBS)
+
+# utils tests
+run_test_utils:
+	$(MAKE) -C ./utils/ tests
+
+# conf tests
+run_test_conf:
+	$(MAKE) -C ./conf/ tests
