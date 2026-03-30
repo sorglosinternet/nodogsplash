@@ -27,3 +27,6 @@ test_utils: $(TEST_UTILS_OBJECT)
 
 run_test_utils: test_utils
 	./tests_in_network_namespace.sh
+
+clean:
+	rm ./test_utils
