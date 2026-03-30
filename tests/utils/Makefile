@@ -30,3 +30,6 @@ test_utils: $(TEST_STATE_FILE_OBJECT)
 
 run_test_utils: test_utils
 	./test_utils
+
+clean:
+	rm ./test_utils

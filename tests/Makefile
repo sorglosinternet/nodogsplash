@@ -33,3 +33,9 @@ run_test_utils:
 # conf tests
 run_test_conf:
 	$(MAKE) -C ./conf/ tests
+
+clean:
+	rm ./test_client_list_mode
+	$(MAKE) -C ./utils/ clean
+	$(MAKE) -C ./conf/ clean
+	$(MAKE) -C ./state_file/ clean
