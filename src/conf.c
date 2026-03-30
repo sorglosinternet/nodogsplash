@@ -398,7 +398,8 @@ Parses firewall rule set information
 static void
 parse_firewall_ruleset(const char *rulesetname, FILE *fd, const char *filename, int *linenum)
 {
-	char line[MAX_BUF], *p1, *p2;
+	char *line = NULL, *p1, *p2;
+	size_t line_size = 0;
 	t_firewall_ruleset *ruleset;
 	int opcode;
 
@@ -417,7 +418,7 @@ parse_firewall_ruleset(const char *rulesetname, FILE *fd, const char *filename, 
 	}
 
 	/* Parsing the rules in the set */
-	while (fgets(line, MAX_BUF, fd)) {
+	while (getline(&line, &line_size, fd) != -1) {
 		(*linenum)++;
 		p1 = _strip_whitespace(line);
 
@@ -463,6 +464,7 @@ parse_firewall_ruleset(const char *rulesetname, FILE *fd, const char *filename, 
 			break;
 		}
 	}
+	free(line);
 	debug(LOG_DEBUG, "FirewallRuleSet %s parsed.", rulesetname);
 }
 
@@ -682,7 +684,8 @@ void
 config_read(const char *filename)
 {
 	FILE *fd;
-	char line[MAX_BUF], *s, *p1, *p2;
+	char *line = NULL, *s, *p1, *p2;
+	size_t line_size = 0;
 	int linenum = 0, opcode, value;
 	struct stat sb;
 
@@ -694,7 +697,7 @@ config_read(const char *filename)
 		exit(1);
 	}
 
-	while (fgets(line, MAX_BUF, fd)) {
+	while (getline(&line, &line_size, fd) != -1) {
 		linenum++;
 		s = _strip_whitespace(line);
 
@@ -1008,6 +1011,7 @@ config_read(const char *filename)
 		}
 	}
 
+	free(line);
 	fclose(fd);
 
 	debug(LOG_INFO, "Done reading configuration file '%s'", filename);
