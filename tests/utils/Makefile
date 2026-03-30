@@ -8,8 +8,6 @@ CFLAGS+=-no-pie
 # mock functions
 LDFLAGS+=-Wl,--wrap=fopen
 
-LDLIBS+=-ljson-c
-
 .PHONY: all tests
 
 all: test_utils
