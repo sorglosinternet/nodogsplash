@@ -757,7 +757,8 @@ ndsctl_json_client(FILE *fp, const t_client *client, time_t now)
 	fprintf(fp, "\"downloaded\":%llu,\n", download_bytes / 1000);
 	fprintf(fp, "\"avg_down_speed\":%.2f,\n", ((double)download_bytes) / 125 / durationsecs);
 	fprintf(fp, "\"uploaded\":%llu,\n", upload_bytes / 1000);
-	fprintf(fp, "\"avg_up_speed\":%.2f\n", ((double)upload_bytes)/ 125 / durationsecs);
+	fprintf(fp, "\"avg_up_speed\":%.2f,\n", ((double)upload_bytes)/ 125 / durationsecs);
+	fprintf(fp, "\"tracking_id\":\"%s\"\n", client->tracking_id ? client->tracking_id : "");
 }
 
 static void

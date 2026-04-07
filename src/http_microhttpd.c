@@ -67,7 +67,7 @@ static int show_statuspage(struct MHD_Connection *connection, t_client *client);
 static int encode_and_redirect_to_splashpage(struct MHD_Connection *connection, const char *originurl, const char *querystr);
 static int redirect_to_splashpage(struct MHD_Connection *connection, t_client *client, const char *host, const char *url);
 static enum MHD_Result send_error(struct MHD_Connection *connection, int error);
-static int send_redirect_temp(struct MHD_Connection *connection, const char *url);
+static int send_redirect_temp(struct MHD_Connection *connection, const char *url, const char *cookie_hdr);
 static int send_refresh(struct MHD_Connection *connection);
 static int is_foreign_hosts(const char *host);
 static int is_splashpage(const char *host, const char *url);
@@ -444,8 +444,15 @@ static int authenticate_client(struct MHD_Connection *connection,
 		client->session_end = 0;
 	}
 
+	char cookie_hdr[256] = {0};
+	if (config->cookie_enabled && client->tracking_id) {
+		snprintf(cookie_hdr, sizeof(cookie_hdr),
+			"nds_id=%s; Max-Age=%d; Path=/; HttpOnly; SameSite=Lax",
+			client->tracking_id, config->cookie_max_age);
+	}
+
 	if (redirect_url) {
-		return send_redirect_temp(connection, redirect_url);
+		return send_redirect_temp(connection, redirect_url, cookie_hdr[0] ? cookie_hdr : NULL);
 	} else {
 		return send_error(connection, 200);
 	}
@@ -486,7 +493,7 @@ static int authenticated(struct MHD_Connection *connection,
 	if (check_authdir_match(url, config->denydir)) {
 		auth_client_deauth(client->id, "client_deauth");
 		snprintf(redirect_to_us, sizeof(redirect_to_us), "http://%s/", config->gw_http_name);
-		return send_redirect_temp(connection, redirect_to_us);
+		return send_redirect_temp(connection, redirect_to_us, NULL);
 	}
 
 	if (check_authdir_match(url, config->authdir)) {
@@ -513,6 +520,33 @@ static int preauthenticated(struct MHD_Connection *connection,
 	char *querystr = NULL;
 
 	s_config *config = config_get_config();
+
+	/* Cookie-based client tracking: auto-authenticate clients that changed MAC/IP */
+	if (config->cookie_enabled) {
+		const char *tid = MHD_lookup_connection_value(connection, MHD_COOKIE_KIND, "nds_id");
+		if (tid && strlen(tid) == 32) {
+			unsigned old_id = 0;
+
+			LOCK_CLIENT_LIST();
+			t_client *tracked = client_list_find_by_tracking_id(tid);
+			if (tracked && tracked != client
+					&& tracked->fw_connection_state == FW_MARK_AUTHENTICATED) {
+				free(client->tracking_id);
+				client->tracking_id = safe_strdup(tracked->tracking_id);
+				old_id = tracked->id;
+			}
+			UNLOCK_CLIENT_LIST();
+
+			if (old_id) {
+				debug(LOG_NOTICE, "Cookie migration: deauthing old client %u, authing new client [%s, %s]",
+					old_id, client->mac, client->ip);
+				auth_client_deauth(old_id, "cookie_migration");
+				if (auth_client_auth(client->id, "cookie_auth") == 0) {
+					return authenticate_client(connection, get_redirect_url(connection), client);
+				}
+			}
+		}
+	}
 
 	debug(LOG_DEBUG, "url: %s", url);
 
@@ -590,7 +624,7 @@ static int encode_and_redirect_to_splashpage(struct MHD_Connection *connection, 
 
 	debug(LOG_DEBUG, "splashpageurl: %s", splashpageurl);
 
-	ret = send_redirect_temp(connection, splashpageurl);
+	ret = send_redirect_temp(connection, splashpageurl, NULL);
 	free(splashpageurl);
 	return ret;
 }
@@ -654,7 +688,7 @@ add_client(const char *mac, const char *ip)
 	return client;
 }
 
-int send_redirect_temp(struct MHD_Connection *connection, const char *url)
+int send_redirect_temp(struct MHD_Connection *connection, const char *url, const char *cookie_hdr)
 {
 	struct MHD_Response *response;
 	int ret;
@@ -672,6 +706,8 @@ int send_redirect_temp(struct MHD_Connection *connection, const char *url)
 	// MHD_set_response_options(response, MHD_RF_HTTP_VERSION_1_0_ONLY, MHD_RO_END);
 	MHD_add_response_header(response, "Location", url);
 	MHD_add_response_header(response, "Connection", "close");
+	if (cookie_hdr)
+		MHD_add_response_header(response, "Set-Cookie", cookie_hdr);
 	ret = MHD_queue_response(connection, MHD_HTTP_TEMPORARY_REDIRECT, response);
 	MHD_destroy_response(response);
 
@@ -912,6 +948,13 @@ static int show_templated_page(struct MHD_Connection *connection, t_client *clie
 	}
 
 	MHD_add_response_header(response, "Content-Type", mimetype);
+	if (config->cookie_enabled && client && client->tracking_id) {
+		char cookie_hdr[256];
+		snprintf(cookie_hdr, sizeof(cookie_hdr),
+			"nds_id=%s; Max-Age=%d; Path=/; HttpOnly; SameSite=Lax",
+			client->tracking_id, config->cookie_max_age);
+		MHD_add_response_header(response, "Set-Cookie", cookie_hdr);
+	}
 	ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
 	MHD_destroy_response(response);
 

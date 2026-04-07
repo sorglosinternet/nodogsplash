@@ -6,12 +6,14 @@
 #include <asm-generic/errno-base.h>
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "../src/client_list.h"
 #include "../src/conf.h"
 #include "../src/fw_abstract.h"
 #include "../src/fw_common.h"
+#include "../src/safe.h"
 
 time_t started_time = 0;
 unsigned int authenticated_since_start = 0;
@@ -182,9 +184,41 @@ struct a_test {
 	void (*test_func)(void);
 };
 
+void test_client_tracking_id(void)
+{
+	t_client *a = add_client(0);
+	t_client *b = add_client(1);
+
+	/* tracking_id is generated and has the right length */
+	assert(a->tracking_id != NULL);
+	assert(b->tracking_id != NULL);
+	assert(strlen(a->tracking_id) == 32);
+	assert(strlen(b->tracking_id) == 32);
+
+	/* each client gets a unique tracking_id */
+	assert(strcmp(a->tracking_id, b->tracking_id) != 0);
+
+	/* tracking_id survives client_reset() while token changes */
+	char *saved_tid = safe_strdup(a->tracking_id);
+	char *saved_tok = safe_strdup(a->token);
+	client_reset(a);
+	assert(strcmp(a->tracking_id, saved_tid) == 0);
+	assert(strcmp(a->token, saved_tok) != 0);
+	free(saved_tid);
+	free(saved_tok);
+
+	/* lookup by tracking_id finds the right client */
+	assert(client_list_find_by_tracking_id(a->tracking_id) == a);
+	assert(client_list_find_by_tracking_id(b->tracking_id) == b);
+
+	/* lookup returns NULL for an unknown tracking_id */
+	assert(client_list_find_by_tracking_id("00000000000000000000000000000000") == NULL);
+}
+
 struct a_test tests[] = {
     {"client_list_mode_mac_ip", "Test the mode MAC/IP (default)", test_client_mac_ip},
     {"client_list_mode_mac", "Test the mode MAC", test_client_mac},
+    {"client_tracking_id", "Test persistent tracking ID across client_reset", test_client_tracking_id},
     {NULL, NULL, NULL},
 };
 
@@ -192,6 +226,7 @@ int main(int argc, char **argv)
 {
 	s_config *config = config_get_config();
 	config->maxclients = 256;
+	config->cookie_enabled = 1;
 
 	client_list_init();
 	struct a_test *current = &tests[0];

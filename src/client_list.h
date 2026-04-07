@@ -56,6 +56,7 @@ typedef struct _t_client {
 	int download_limit;		/**< @brief Download limit, kb/s */
 	int upload_limit;		/**< @brief Upload limit, kb/s */
 	unsigned id;
+	char *tracking_id;	/**< @brief Persistent browser cookie tracking ID (32 hex chars) */
 } t_client;
 
 /** @brief Get the first element of the list of connected clients
@@ -91,6 +92,9 @@ t_client *client_list_find_by_mac(const char mac[]); /* needed by ndsctl_thread.
 
 /** @brief Finds a client by its token */
 t_client *client_list_find_by_token(const char token[]);
+
+/** @brief Finds a client by its persistent cookie tracking ID */
+t_client *client_list_find_by_tracking_id(const char tid[]);
 
 /** @brief Reset volatile client fields */
 void client_reset(t_client *client);

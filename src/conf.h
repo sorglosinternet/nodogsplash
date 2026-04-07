@@ -93,6 +93,8 @@
 #define DEFAULT_IP6 0
 #define DEFAULT_USE_NFTABLES 0
 #define DEFAULT_NFTABLE_NAME "nodogsplash"
+#define DEFAULT_COOKIE_ENABLED 1
+#define DEFAULT_COOKIE_MAX_AGE 86400	/* 1 day in seconds */
 /*@}*/
 
 /**
@@ -202,6 +204,8 @@ typedef struct {
 	enum client_mode client_mode;	/**< @brief define how the client list is organized */
 	bool use_nftables;
 	char *nftable_name;
+	int cookie_enabled;	/**< @brief Enable cookie-based client tracking */
+	int cookie_max_age;	/**< @brief Max-Age for the tracking cookie in seconds */
 } s_config;
 
 /** @brief Get the current gateway configuration */

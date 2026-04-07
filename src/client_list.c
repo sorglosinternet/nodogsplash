@@ -32,6 +32,8 @@
 #include <pthread.h>
 #include <sys/wait.h>
 #include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
 
 #include <assert.h>
 #include <string.h>
@@ -88,6 +90,7 @@ client_list_init(void)
 {
 	firstclient = NULL;
 	client_count = 0;
+	srandom((unsigned int)time(NULL) ^ ((unsigned int)getpid() << 16));
 }
 
 /*! Flush all clients without calling hooks or cleaning up the fw
@@ -148,6 +151,14 @@ _client_list_append(const char mac[], const char ip[])
 
 	// Reset volatile fields
 	client_reset(client);
+
+	// If cookie_enabled, generate a persistent tracking is_blocked_mac
+	// (32 hex chars, 4 x 31 bits of entropy)
+	if (config->cookie_enabled) {
+		safe_asprintf(&client->tracking_id,
+			"%08lx%08lx%08lx%08lx",
+			random(), random(), random(), random());
+	}
 
 	// Blocked or Trusted client do not trigger the splash page.
 	// They must access the splash or status page manually.
@@ -430,6 +441,27 @@ client_list_find_by_token(const char token[])
 	return NULL;
 }
 
+/**
+ * Finds a client by its persistent cookie tracking ID. Returns NULL if
+ * the client could not be found.
+ * @return Pointer to the client, or NULL if not found
+ */
+t_client *
+client_list_find_by_tracking_id(const char tid[])
+{
+	t_client *ptr;
+
+	ptr = firstclient;
+	while (ptr) {
+		if (ptr->tracking_id && !strcmp(ptr->tracking_id, tid)) {
+			return ptr;
+		}
+		ptr = ptr->next;
+	}
+
+	return NULL;
+}
+
 /** @internal
  * @brief Frees the memory used by a t_client structure
  * This function frees the memory used by the t_client structure in the
@@ -447,6 +479,9 @@ _client_list_free_node(t_client *client)
 
 	if (client->token)
 		free(client->token);
+
+	if (client->tracking_id)
+		free(client->tracking_id);
 
 	free(client);
 }

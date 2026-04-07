@@ -112,6 +112,8 @@ typedef enum {
 	oClientListMode,
 	oUseNftables,
 	oNftableName,
+	oCookieEnabled,
+	oCookieMaxAge,
 } OpCodes;
 
 /** @internal
@@ -166,6 +168,8 @@ static const struct {
 	{ "clientlistmode", oClientListMode },
 	{ "usenftables", oUseNftables },
 	{ "nftablename", oNftableName },
+	{ "cookieenabled", oCookieEnabled },
+	{ "cookiemaxage", oCookieMaxAge },
 	{ NULL, oBadOption },
 };
 
@@ -246,6 +250,8 @@ config_init(void)
 	config.client_mode = MODE_MAC_IP;
 	config.use_nftables = DEFAULT_USE_NFTABLES;
 	config.nftable_name = safe_strdup(DEFAULT_NFTABLE_NAME);
+	config.cookie_enabled = DEFAULT_COOKIE_ENABLED;
+	config.cookie_max_age = DEFAULT_COOKIE_MAX_AGE;
 
 	/* Set up default FirewallRuleSets, and their empty ruleset policies */
 	rs = add_ruleset("trusted-users");
@@ -972,6 +978,22 @@ config_read(const char *filename)
 			break;
 		case oNftableName:
 			config.nftable_name = safe_strdup(p1);
+			break;
+		case oCookieEnabled:
+			if ((value = parse_boolean(p1)) != -1) {
+				config.cookie_enabled = value;
+			} else {
+				debug(LOG_ERR, "Bad option %s on line %d in %s", s, linenum, filename);
+				debug(LOG_ERR, "Exiting...");
+				exit(1);
+			}
+			break;
+		case oCookieMaxAge:
+			if (sscanf(p1, "%d", &config.cookie_max_age) < 1) {
+				debug(LOG_ERR, "Bad arg %s to option %s on line %d in %s", p1, s, linenum, filename);
+				debug(LOG_ERR, "Exiting...");
+				exit(1);
+			}
 			break;
 		case oBadOption:
 			debug(LOG_ERR, "Bad option %s on line %d in %s", s, linenum, filename);

@@ -35,6 +35,8 @@ state_file_export_client(t_client *client)
 	GOTO_ERR(err, json_object_set_new(cli, "session_end", json_integer(client->session_end)));
 	GOTO_ERR(err, json_object_set_new(cli, "download_limit", json_integer(client->download_limit)));
 	GOTO_ERR(err, json_object_set_new(cli, "upload_limit", json_integer(client->upload_limit)));
+	if (client->tracking_id)
+		GOTO_ERR(err, json_object_set_new(cli, "tracking_id", json_string(client->tracking_id)));
 
 	json_t *counters = json_object();
 	if (!counters)
@@ -163,6 +165,14 @@ state_file_import_client(json_t *json_client)
 		free(client->token);
 
 	client->token = safe_strdup(token);
+
+	/* Restore persistent tracking ID if present; keep freshly generated one otherwise */
+	json_t *tid_json = json_object_get(json_client, "tracking_id");
+	if (tid_json && json_is_string(tid_json)) {
+		if (client->tracking_id)
+			free(client->tracking_id);
+		client->tracking_id = safe_strdup(json_string_value(tid_json));
+	}
 
 	/* Jansson nutzt json_integer_value (liefert long long), wir casten implizit */
 	JSON_GET_FIELD(client->session_start, err, json_client, "session_start", json_is_integer, json_integer_value);
